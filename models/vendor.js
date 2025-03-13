@@ -1,0 +1,13 @@
+const mongoose = require("mongoose");
+
+const VendorSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    phone: { type: String, required: true },
+    address: { type: String, required: true },
+    categories: [{ type: String }], 
+    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },// E.g., ["Electronics", "Office Supplies"]
+    rating: { type: Number, default: 0 }, // Average rating from RFQs
+}, { timestamps: true });
+
+module.exports = mongoose.model("Vendor", VendorSchema);
