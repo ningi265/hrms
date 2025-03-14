@@ -123,37 +123,6 @@ exports.getPOById = async (req, res) => {
     }
   };
 
-// Vendor updates PO delivery status
-exports.updateDeliveryStatus = async (req, res) => {
-    try {
-        console.log("Update Delivery Status Request Body:", req.body); // Log the request payload
-        console.log("Update Delivery Status Request Params:", req.params); // Log the request params
-
-        const { status } = req.body;
-        const po = await PurchaseOrder.findById(req.params.id);
-        console.log("Purchase Order Found for Delivery Update:", po); // Log the PO
-
-        if (!po) return res.status(404).json({ message: "Purchase Order not found" });
-        if (po.vendor.toString() !== req.user.id) return res.status(403).json({ message: "Unauthorized" });
-
-        if (!["shipped", "delivered"].includes(status)) return res.status(400).json({ message: "Invalid status" });
-
-        po.deliveryStatus = status;
-        await po.save();
-        console.log("Purchase Order Delivery Status Updated:", po); // Log the updated PO
-
-        if (status === "shipped") {
-            await notifyPOShipped(po.procurementOfficer, po);
-        } else if (status === "delivered") {
-            await notifyPODelivered(po.procurementOfficer, po);
-        }
-
-        res.json({ message: `PO marked as ${status}`, po });
-    } catch (err) {
-        console.error("Error in updateDeliveryStatus:", err); // Log the error
-        res.status(500).json({ message: "Server error", error: err.message });
-    }
-};
 
 
 // Get purchase order stats (total, pending, approved, rejected, shipped, delivered, confirmed)
@@ -269,11 +238,11 @@ exports.updateDeliveryStatus = async (req, res) => {
             return res.status(400).json({ message: "Token is required" });
         }
 
-        console.log("🔹 Fetching vendor ID from: http://localhost:4000/api/vendors/me");
+        console.log("🔹 Fetching vendor ID from: https://hrms-6s3i.onrender.com/api/vendors/me");
         console.log("🔹 Using token:", token);
 
         // Step 1: Fetch the vendor ID using the user ID
-        const vendorResponse = await fetch("http://localhost:4000/api/vendors/me", {
+        const vendorResponse = await fetch("https://hrms-6s3i.onrender.com/api/vendors/me", {
             headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${token}`,
