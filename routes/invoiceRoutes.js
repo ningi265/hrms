@@ -18,10 +18,10 @@ router.post("/", protect(["vendor"]), submitInvoice);
 router.get("/stats", protect(["admin", "procurement_officer","vendor"]), getInvoiceStats);
 
 // Approve invoice (Admin Only)
-router.post("/:id/approve", protect(["admin","procurement_officer"]), approveInvoice);
+router.put("/:id/approve", protect(["admin","procurement_officer"]), approveInvoice);
 
 // Reject invoice (Admin Only)
-router.post("/:id/reject", protect(["admin","procurement_officer"]), rejectInvoice);
+router.put("/:id/reject", protect(["admin","procurement_officer"]), rejectInvoice);
 
 // Mark invoice as paid (Finance Team)
 router.put("/:id/status/pay", protect(["finance", "admin", "procurement_officer"]), markAsPaid);
