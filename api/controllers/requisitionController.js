@@ -119,15 +119,20 @@ exports.getRequisitionStats = async (req, res) => {
         const pending = await Requisition.countDocuments({ status: "pending" });
         const approved = await Requisition.countDocuments({ status: "approved" });
         const rejected = await Requisition.countDocuments({ status: "rejected" });
+        const requisitions = await Requisition.find({ status: "pending" })
+            .populate("employee", "name email");
 
         const stats = {
-            total,
-            pending,
-            approved,
-            rejected,
+            counts: {
+                total,
+                pending,
+                approved,
+                rejected
+            },
+            pendingRequisitions: requisitions // Include the full requisitions data
         };
 
-        res.json(stats);
+        res.json(stats); // Send a single response with all data
     } catch (err) {
         res.status(500).json({ message: "Server error", error: err.message });
     }
@@ -138,6 +143,27 @@ exports.getPendingRequisitions = async (req, res) => {
     try {
         const requisitions = await Requisition.find({ status: "pending" }).populate("employee", "name email");
         res.json(requisitions);
+    } catch (err) {
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+};
+
+
+exports.travelRequisition = async (req, res) => {
+    try {
+        console.log(req.body);
+        const { destination, purpose, departureDate, returnDate, meansOfTransport } = req.body;
+
+        const newRequisition = await Requisition.create({
+            employee: req.user.id, // User from JWT
+            destination,
+            purpose,
+            departureDate,
+            returnDate,
+            meansOfTransport,
+        });
+
+        res.status(201).json({ message: "Travel requisition submitted successfully", requisition: newRequisition });
     } catch (err) {
         res.status(500).json({ message: "Server error", error: err.message });
     }

@@ -65,3 +65,12 @@ exports.login = async (req, res) => {
         res.status(500).json({ message: "Server error", error: err.message });
     }
 };
+
+exports.getDrivers = async (req, res) => {
+    try {
+        const drivers = await User.find({ role: "driver" }).populate("name", "name email");
+        res.json(drivers);
+    } catch (err) {
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+};

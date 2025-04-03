@@ -8,6 +8,7 @@ const InvoiceSchema = new mongoose.Schema({
     status: { type: String, enum: ["pending", "approved", "rejected", "paid"], default: "pending" },
     approver: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // Who approved/rejected
     paymentDate: { type: Date }, // When payment was processed
+    createdAt: { type: Date, default: Date.now },
 }, { timestamps: true });
 
 module.exports = mongoose.model("Invoice", InvoiceSchema);

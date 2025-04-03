@@ -127,32 +127,55 @@ exports.getPOById = async (req, res) => {
 
 // Get purchase order stats (total, pending, approved, rejected, shipped, delivered, confirmed)
 exports.getPOStats = async (req, res) => {
-    try {
-        console.log("Fetching Purchase Order Stats"); // Log the action
-        const total = await PurchaseOrder.countDocuments();
-        const pending = await PurchaseOrder.countDocuments({ status: "pending" });
-        const approved = await PurchaseOrder.countDocuments({ status: "approved" });
-        const rejected = await PurchaseOrder.countDocuments({ status: "rejected" });
-        const shipped = await PurchaseOrder.countDocuments({ deliveryStatus: "shipped" });
-        const delivered = await PurchaseOrder.countDocuments({ deliveryStatus: "delivered" });
-        const confirmed = await PurchaseOrder.countDocuments({ deliveryStatus: "confirmed" });
+  try {
+      console.log("Fetching Purchase Order Stats");
+      
+      // Count operations
+      const [total, pending, approved, rejected, shipped, delivered, confirmed] = await Promise.all([
+          PurchaseOrder.countDocuments(),
+          PurchaseOrder.countDocuments({ status: "pending" }),
+          PurchaseOrder.countDocuments({ status: "approved" }),
+          PurchaseOrder.countDocuments({ status: "rejected" }),
+          PurchaseOrder.countDocuments({ deliveryStatus: "shipped" }),
+          PurchaseOrder.countDocuments({ deliveryStatus: "delivered" }),
+          PurchaseOrder.countDocuments({ deliveryStatus: "confirmed" })
+      ]);
 
-        const stats = {
-            total,
-            pending,
-            approved,
-            rejected,
-            shipped,
-            delivered,
-            confirmed,
-        };
-        console.log("Purchase Order Stats:", stats); // Log the stats
+      // Get actual pending POs with relevant data
+      const pendingPOs = await PurchaseOrder.find({ status: "pending" })
+          .populate('vendor', 'name email')  // Adjust according to your schema
+          .populate('rfq', 'requisitionNumber')  // Example additional population
+          .select('poNumber amount createdAt dueDate')  // Only include essential fields
+          .sort({ createdAt: -1 })  // Newest first
+          .limit(10);  // Limit results
 
-        res.json(stats);
-    } catch (err) {
-        console.error("Error in getPOStats:", err); // Log the error
-        res.status(500).json({ message: "Server error", error: err.message });
-    }
+      const stats = {
+          counts: {
+              total,
+              pending,
+              approved,
+              rejected,
+              shipped,
+              delivered,
+              confirmed
+          },
+          pendingPOs: pendingPOs  // Include the actual pending purchase orders
+      };
+
+      console.log("Successfully fetched PO stats");
+      res.json(stats);
+
+  } catch (err) {
+      console.error("Error in getPOStats:", {
+          message: err.message,
+          stack: err.stack,
+          timestamp: new Date().toISOString()
+      });
+      res.status(500).json({ 
+          message: "Failed to fetch purchase order statistics",
+          error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+      });
+  }
 };
 
 // Vendor confirms receipt and acceptance of a PO

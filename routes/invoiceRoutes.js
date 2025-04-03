@@ -24,7 +24,7 @@ router.post("/:id/approve", protect(["admin","procurement_officer"]), approveInv
 router.post("/:id/reject", protect(["admin","procurement_officer"]), rejectInvoice);
 
 // Mark invoice as paid (Finance Team)
-router.put("/:id/status/pay", protect(["finance", "admin", "procurement_officer"]), markAsPaid);
+router.post("/:id/status/pay", protect(["finance", "admin", "procurement_officer"]), markAsPaid);
 
 // Get all invoices
 router.get("/", protect(["procurement_officer", "admin", "finance"]), getAllInvoices);

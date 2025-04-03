@@ -123,11 +123,17 @@ exports.getRFQStats = async (req, res) => {
         const total = await RFQ.countDocuments();
         const open = await RFQ.countDocuments({ status: "open" });
         const closed = await RFQ.countDocuments({ status: "closed" });
+        const openRFQs = await RFQ.find({ status: "open" })
+        .populate("procurementOfficer", "name email")
+        .sort({ deadline: 1 }); // Sort by deadline ascending
 
         const stats = {
-            total,
-            open,
-            closed,
+            counts: {
+                total,
+                open,
+                closed
+            },
+            openRFQs: openRFQs // Include the full open RFQs data
         };
 
         res.json(stats);

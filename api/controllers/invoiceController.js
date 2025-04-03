@@ -155,23 +155,73 @@ exports.getInvoiceById = async (req, res) => {
 // Get invoice stats (total, pending, approved, rejected, paid)
 exports.getInvoiceStats = async (req, res) => {
     try {
-        const total = await Invoice.countDocuments();
-        const pending = await Invoice.countDocuments({ status: "pending" });
-        const approved = await Invoice.countDocuments({ status: "approved" });
-        const rejected = await Invoice.countDocuments({ status: "rejected" });
-        const paid = await Invoice.countDocuments({ status: "paid" });
+        console.log("Fetching Invoice Statistics");
+        
+        // Execute all count operations in parallel for better performance
+        const [total, pending, approved, rejected, paid] = await Promise.all([
+            Invoice.countDocuments(),
+            Invoice.countDocuments({ status: "pending" }),
+            Invoice.countDocuments({ status: "approved" }),
+            Invoice.countDocuments({ status: "rejected" }),
+            Invoice.countDocuments({ status: "paid" })
+        ]);
+
+        // Get pending invoices with relevant data
+        const pendingInvoices = await Invoice.find({ status: "pending" })
+            .populate('vendor', 'name email')  // Vendor information
+            .populate('amountDue', 'amount')  
+            .populate('po', 'poNumber')  // Related PO
+            .populate('createdAt', 'date')  
+            .select('invoiceNumber amount dateDue paymentTerms')  // Essential fields
+            .sort({ dateDue: 1 })
+            .limit(10);  // Limit results
+
+        // Get recently paid invoices
+        const recentPaidInvoices = await Invoice.find({ status: "paid" })
+            .sort({ paymentDate: -1 })  // Newest payments first
+            .limit(5)  // Last 5 payments
+            .sort({ createdAt: -1 })
+            .select('invoiceNumber amount paymentDate');
 
         const stats = {
-            total,
-            pending,
-            approved,
-            rejected,
-            paid,
+            counts: {
+                total,
+                pending,
+                approved,
+                rejected,
+                paid,
+                overdue: await Invoice.countDocuments({  // Additional useful metric
+                    status: "pending",
+                    dateDue: { $lt: new Date() }
+                })
+            },
+            pendingInvoices,
+            recentPaidInvoices,
+            summary: {
+                totalAmountPending: await Invoice.aggregate([
+                    { $match: { status: "pending" } },
+                    { $group: { _id: null, total: { $sum: "$amount" } } }
+                ]).then(res => res[0]?.total || 0)
+            }
         };
 
+        console.log("Successfully fetched invoice statistics");
         res.json(stats);
+
     } catch (err) {
-        res.status(500).json({ message: "Server error", error: err.message });
+        console.error("Error fetching invoice stats:", {
+            error: err.message,
+            stack: err.stack,
+            timestamp: new Date().toISOString()
+        });
+        
+        res.status(500).json({ 
+            message: "Failed to fetch invoice statistics",
+            error: process.env.NODE_ENV === 'development' ? {
+                message: err.message,
+                stack: err.stack
+            } : undefined
+        });
     }
 };
 

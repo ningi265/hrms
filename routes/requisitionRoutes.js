@@ -8,7 +8,8 @@ const {
     getApprovedRequisitions,
     getRejectedRequisitions,
     getPendingRequisitions,
-    getRequisitionStats
+    getRequisitionStats,
+    travelRequisition
 } = require("../api/controllers/requisitionController");
 const { protect } = require("../api/middleware/authMiddleware");
 
@@ -35,5 +36,6 @@ router.get("/pending", protect(["admin", "procurement_officer"]), getPendingRequ
 router.get("/stats", protect(["admin", "procurement_officer"]), getRequisitionStats);
 
 router.get("/pending", protect(["admin", "procurement_officer"]), getPendingRequisitions);
+router.post("/travel", protect(["employee", "procurement_officer"]), travelRequisition);
 
 module.exports = router;
