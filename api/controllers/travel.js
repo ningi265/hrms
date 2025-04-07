@@ -1,4 +1,5 @@
 const express = require("express");
+const mongoose = require('mongoose');
 const { body, validationResult } = require("express-validator");
 const TravelRequest = require("../../models/travel");
 const { protect }=require("../../api/middleware/authMiddleware");
@@ -1023,6 +1024,71 @@ exports.sendTravelNotifications = async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Server error while sending fleet notifications',
+      error: error.message 
+    });
+  }
+};
+
+// @desc    Submit travel reconciliation
+// @route   POST /api/travel-requests/:id/reconcile
+// @access  Private
+exports.submitReconciliation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(req.body);
+    
+    // Validate the ID
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        message: "Invalid travel request ID" 
+      });
+    }
+
+    const { 
+      totalSpent, 
+      remainingBalance, 
+      additionalNotes 
+    } = req.body;
+
+    // Validate input
+    if (typeof totalSpent !== 'number' || typeof remainingBalance !== 'number') {
+      return res.status(400).json({ 
+        message: "totalSpent and remainingBalance must be numbers" 
+      });
+    }
+
+    // Find and update the travel request
+    const travelRequest = await TravelRequest.findByIdAndUpdate(
+      id,
+      {
+
+        reconciliation: {
+          submittedDate: new Date(),
+          approvedDate: null,
+          approvedBy: null,
+          totalSpent,
+          remainingBalance,
+          status: "pending",
+          notes: additionalNotes,
+          submittedBy: req.user._id
+        }
+      },
+      { new: true }
+    ).populate('employee', 'name email');
+
+    if (!travelRequest) {
+      return res.status(404).json({ message: "Travel request not found" });
+    }
+
+    res.status(200).json({
+      message: "Reconciliation submitted successfully",
+      travelRequest
+    });
+
+  } catch (error) {
+    console.error("Error submitting reconciliation:", error);
+    res.status(500).json({ 
+      message: "Server error",
       error: error.message 
     });
   }

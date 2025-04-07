@@ -1,21 +1,50 @@
-const postmark = require("postmark");
+const nodemailer = require('nodemailer');
+const { google } = require('googleapis');
 const Notification = require("../../models/notification");
 const User = require("../../models/user");
 
-const client = new postmark.ServerClient(process.env.POSTMARK_API_KEY);
+// Set up OAuth2 client
+const oAuth2Client = new google.auth.OAuth2(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  process.env.GOOGLE_REDIRECT_URI
+);
 
-// Send email notification using Postmark
+oAuth2Client.setCredentials({
+  refresh_token: process.env.GOOGLE_REFRESH_TOKEN
+});
+
+// Create reusable transporter object
+async function createTransporter() {
+  const accessToken = await oAuth2Client.getAccessToken();
+
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      type: 'OAuth2',
+      user: process.env.GMAIL_ADDRESS,
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      refreshToken: process.env.GOOGLE_REFRESH_TOKEN,
+      accessToken: accessToken.token
+    }
+  });
+}
+
+// Send email notification using Nodemailer
 const sendEmailNotification = async (userEmail, subject, message) => {
     try {
-        await client.sendEmail({
-            From: process.env.EMAIL_FROM,
-            To: userEmail,
-            Subject: subject,
-            TextBody: message,
+        const transporter = await createTransporter();
+        await transporter.sendMail({
+            from: `"${process.env.EMAIL_FROM_NAME}" <${process.env.GMAIL_ADDRESS}>`,
+            to: userEmail,
+            subject: subject,
+            text: message,
+            // You could also add html: '<p>HTML version</p>' if needed
         });
-        console.log(`Email sent to ${userEmail}`);
+        console.log(`Email sent to ${userEmail}`); 
     } catch (error) {
-        console.error("Postmark email sending error:", error);
+        console.error("Nodemailer email sending error:", error);
     }
 };
 

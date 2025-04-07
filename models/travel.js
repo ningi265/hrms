@@ -12,8 +12,8 @@ const TravelRequestSchema = new mongoose.Schema({
   currency: { type: String, required: false }, 
   reconciled:{type: Boolean, default: false},
   documents: [{
-    name: String,   // File name
-    url: String     // File path or URL
+    name: String,  
+    url: String   
   }],
   
   meansOfTravel: { 

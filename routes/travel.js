@@ -25,6 +25,7 @@ router.get('/employee/:employeeId/reconcile-pending', protect, travelController.
 router.get('/employee/processed', protect, travelController.getEmployeeProcessedRequests);
 router.put( '/:id/expenses', protect(["employee","procurement_officer"]), travelController.saveExpense);
 router.put('/:id/assign-driver',protect(["admin","procurement_officer"]),travelController.assignDriver);
+router.post('/:id/reconcile', protect(["admin","employee","procurement_officer"]),travelController.submitReconciliation);
 
 router.post('/:id/send-notifications', protect(["admin","procurement_officer"]), travelController.sendTravelNotifications);
 
