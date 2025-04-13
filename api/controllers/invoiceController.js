@@ -5,8 +5,7 @@ const { notifyInvoiceSubmitted, notifyInvoiceApproval, notifyInvoicePayment } = 
 // Vendor submits an invoice
 exports.submitInvoice = async (req, res) => {
     try {
-        console.log("Request Body:", req.body); // Log the incoming request body
-        const { poId, invoiceNumber, amountDue, vendorId } = req.body; // Include vendorId from frontend
+        const { poId, invoiceNumber, amountDue, vendorId } = req.body; 
 
         console.log("Fetching Purchase Order with ID:", poId);
         const po = await PurchaseOrder.findById(poId);
@@ -107,7 +106,7 @@ exports.markAsPaid = async (req, res) => {
         return res.status(400).json({ message: "Invoice is already paid" });
       }
   
-      // Simulate payment processing (replace with actual payment gateway integration)
+      // Simulate payment processing (to be replaced with actual payment gateway integration)
       // For now, we'll assume the payment is successful
       const paymentSuccess = true; // Simulate payment success
   

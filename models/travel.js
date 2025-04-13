@@ -23,7 +23,7 @@ const TravelRequestSchema = new mongoose.Schema({
   },
   status: { 
     type: String, 
-    enum: ['pending', 'supervisor_approved', 'final_approved', 'rejected', 'completed'],
+    enum: ['pending', 'supervisor_approved', 'final_approved', 'rejected','pending_reconciliation', 'completed'],
     default: 'pending'
   },
   supervisor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -68,6 +68,22 @@ const TravelRequestSchema = new mongoose.Schema({
     includeItinerary: Boolean,
     sentBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
   },
+  reconciliation: {
+    submittedDate: Date,
+    approvedDate: Date,
+    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    totalSpent: Number,
+    remainingBalance: Number,
+    status: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected', 'pending_reconciliation'],
+      default: 'pending'
+    },
+    notes: String,
+    submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    actualReturnDate: Date,  // Add this field to store the actual return date
+    tripReport: String       // Add this field for the trip summary
+  },
   payment: {
     processedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     processedAt: Date,
@@ -86,8 +102,6 @@ const TravelRequestSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 
-
-// Add pagination plugin
 TravelRequestSchema.plugin(mongoosePaginate);
 
 const TravelRequest = mongoose.model('TravelRequest', TravelRequestSchema);

@@ -14,7 +14,9 @@ router.put( '/:id/supervisor-approval', protect(["admin","procurement_officer"])
 
 router.put('/:id/final-approval',protect(["admin","procurement_officer"]),travelController.finalApproval);
 
-// Fetching Routes
+// Fetching Routes     
+router.get( '/pending/recon', protect(["admin","procurement_officer"]), travelController.getPendingReconciliation);
+router.get( '/approved/recon', protect(["admin","procurement_officer"]), travelController.getApprovedReconciliation);
 router.get( '/pending', protect(["employee","procurement_officer"]), travelController.getPendingRequests);
 router.get( '/pending/all', protect(["employee","procurement_officer"]), travelController.getPendingRequestsAll);
 router.get( '/pending/stats', protect(["employee","procurement_officer"]), travelController.getPendingApprovalsStats);
@@ -34,6 +36,7 @@ router.put('/:id/finance-process', protect(["admin","procurement_officer"]), tra
 
 // Travel Execution Routes
 router.put('/:id/complete-travel', protect, travelController.completeTravel);
+router.put( '/:id/process-reconciliation',  protect(["admin","procurement_officer"]), travelController.processReconciliation);
 
 // Reconciliation Routes
 router.post(

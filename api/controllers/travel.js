@@ -161,6 +161,48 @@ exports.getPendingApprovalsStats = async (req, res) => {
   }
 };
 
+exports.getPendingReconciliation = async (req, res) => {
+  try {
+     
+
+      const travelRequests = await TravelRequest.find({ 
+         status:  { $in: ["pending_reconciliation", "approved"] },
+      })
+      .populate("employee", "name email")
+      .populate("supervisor", "name email")
+      .exec();
+
+      res.status(200).json(travelRequests);
+  } catch (error) {
+      console.error("Error in getPendingRequests:", error);
+      res.status(500).json({ 
+          message: "Server error",
+          error: error.message 
+      });
+  }
+};
+
+exports.getApprovedReconciliation = async (req, res) => {
+  try {
+     
+
+      const travelRequests = await TravelRequest.find({ 
+         status: "approved", 
+      })
+      .populate("employee", "name email")
+      .populate("supervisor", "name email")
+      .exec();
+
+      res.status(200).json(travelRequests);
+  } catch (error) {
+      console.error("Error in getPendingRequests:", error);
+      res.status(500).json({ 
+          message: "Server error",
+          error: error.message 
+      });
+  }
+};
+
 exports.getPendingRequestsAll = async (req, res) => {
   try {
      
@@ -181,7 +223,6 @@ exports.getPendingRequestsAll = async (req, res) => {
       });
   }
 };
-
 exports.getFinanceProcessedRequestsUser = async (req, res) => {
   try {
     if (!req.user?._id) {
@@ -346,9 +387,8 @@ exports.getFinancePendingRequests = async (req, res) => {
   try {
     const approvedRequests = await TravelRequest.find({
       finalApproval: "approved",
-      financeStatus: "pending"
+      financeStatus:  { $in: ["pending", "processed"] },
     }).populate("employee", "name email department");
-    
     res.status(200).json(approvedRequests);
   } catch (error) {
     console.error("Error fetching finance pending requests:", error);
@@ -1035,7 +1075,6 @@ exports.sendTravelNotifications = async (req, res) => {
 exports.submitReconciliation = async (req, res) => {
   try {
     const { id } = req.params;
-    console.log(req.body);
     
     // Validate the ID
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
@@ -1047,7 +1086,9 @@ exports.submitReconciliation = async (req, res) => {
     const { 
       totalSpent, 
       remainingBalance, 
-      additionalNotes 
+      additionalNotes,
+      returnDate,       // Add this from req.body
+      tripReport        // Add this from req.body
     } = req.body;
 
     // Validate input
@@ -1057,24 +1098,41 @@ exports.submitReconciliation = async (req, res) => {
       });
     }
 
+    // Validate returnDate if provided
+    if (returnDate && isNaN(new Date(returnDate).getTime())) {
+      return res.status(400).json({
+        message: "Invalid return date format"
+      });
+    }
+
+    // Prepare update object
+    const updateData = {
+      status: 'pending_reconciliation', // Update the main status
+      reconciled: true,                 // Mark as reconciled
+      reconciliation: {
+        submittedDate: new Date(),
+        approvedDate: null,
+        approvedBy: null,
+        totalSpent,
+        remainingBalance,
+        status: "pending_reconciliation",
+        notes: additionalNotes,
+        submittedBy: req.user._id,
+        actualReturnDate: returnDate ? new Date(returnDate) : undefined,
+        tripReport
+      },
+      $push: {  // Optionally add to payment.expenses if needed
+        'payment.expenses': req.body.expenses || []
+      }
+    };
+
     // Find and update the travel request
     const travelRequest = await TravelRequest.findByIdAndUpdate(
       id,
-      {
-
-        reconciliation: {
-          submittedDate: new Date(),
-          approvedDate: null,
-          approvedBy: null,
-          totalSpent,
-          remainingBalance,
-          status: "pending",
-          notes: additionalNotes,
-          submittedBy: req.user._id
-        }
-      },
+      updateData,
       { new: true }
-    ).populate('employee', 'name email');
+    ).populate('employee', 'name email')
+     .populate('reconciliation.submittedBy', 'name email');
 
     if (!travelRequest) {
       return res.status(404).json({ message: "Travel request not found" });
@@ -1087,6 +1145,103 @@ exports.submitReconciliation = async (req, res) => {
 
   } catch (error) {
     console.error("Error submitting reconciliation:", error);
+    res.status(500).json({ 
+      message: "Server error",
+      error: error.message 
+    });
+  }
+};
+
+// In your reconciliation controller file
+exports.processReconciliation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Validate the ID
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        message: "Invalid travel request ID" 
+      });
+    }
+
+    const { 
+      decision, // "approve" or "reject"
+      internalNotes,
+      expenseNotes,
+      reimbursementMethod,
+      reimbursementAmount,
+      reimbursementCurrency,
+      reimbursementDate
+    } = req.body;
+
+    // Validate input
+    if (!['approve', 'reject'].includes(decision)) {
+      return res.status(400).json({ 
+        message: "Decision must be either 'approve' or 'reject'" 
+      });
+    }
+
+    // Prepare base update object
+    const updateData = {
+      status: decision === 'approve' ? 'approved' : 'rejected',
+      'reconciliation.status': decision === 'approve' ? 'approved' : 'rejected',
+      'reconciliation.approvedDate': new Date(),
+      'reconciliation.approvedBy': req.user._id,
+      'reconciliation.notes': internalNotes,
+      reconciled: decision === 'approve',
+    };
+
+    // Add reimbursement details if applicable
+    if (decision === 'approve' && reimbursementMethod !== 'n/a') {
+      updateData['reconciliation.reimbursementDetails'] = {
+        method: reimbursementMethod,
+        amount: reimbursementAmount,
+        currency: reimbursementCurrency,
+        processedDate: new Date(reimbursementDate)
+      };
+    }
+
+    // Initialize options without arrayFilters
+    const options = { new: true };
+
+    // Only add expense updates if expenseNotes exist
+    if (expenseNotes && typeof expenseNotes === 'object' && Object.keys(expenseNotes).length > 0) {
+      const expenseUpdates = {};
+      Object.entries(expenseNotes).forEach(([expenseId, note]) => {
+        expenseUpdates[`payment.expenses.$[elem].status`] = decision === 'approve' ? 'approved' : 'rejected';
+        expenseUpdates[`payment.expenses.$[elem].notes`] = note;
+      });
+
+      // Add expense updates to the main update operation
+      updateData['payment.expenses'] = {
+        $each: [],
+        $position: 0
+      };
+      Object.assign(updateData, expenseUpdates);
+
+      // Add arrayFilters only when we're actually using them
+      options.arrayFilters = [{ 'elem._id': { $in: Object.keys(expenseNotes) } }];
+    }
+
+    // Find and update the travel request
+    const travelRequest = await TravelRequest.findByIdAndUpdate(
+      id,
+      { $set: updateData },
+      options
+    ).populate('employee', 'name email')
+     .populate('reconciliation.approvedBy', 'name');
+
+    if (!travelRequest) {
+      return res.status(404).json({ message: "Travel request not found" });
+    }
+
+    res.status(200).json({
+      message: `Reconciliation ${decision === 'approve' ? 'approved' : 'rejected'} successfully`,
+      travelRequest
+    });
+
+  } catch (error) {
+    console.error("Error processing reconciliation:", error);
     res.status(500).json({ 
       message: "Server error",
       error: error.message 
