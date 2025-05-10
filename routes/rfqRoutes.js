@@ -13,19 +13,39 @@ const { getPOById } = require("../api/controllers/purchaseOrderController");
 const router = express.Router();
 
 // Create RFQ (Procurement Officers only)
-router.post("/", protect(["procurement_officer", "admin"]), createRFQ);
+router.post("/", protect(["procurement_officer", "admin","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), createRFQ);
 
 // Get all RFQs (Procurement Officers & Admins)
-router.get("/", protect(["procurement_officer", "admin", "vendor"]), getAllRFQs);
+router.get("/", protect(["procurement_officer", "admin", "vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), getAllRFQs);
 
 // Vendor submits a quote
 router.post("/:id/quote", protect(["vendor", "admin"]), submitQuote);
 
 // Select the best vendor (Procurement Officers & Admins)
-router.put("/:id/select", protect(["procurement_officer", "admin"]), selectVendor);
+router.put("/:id/select", protect(["procurement_officer", "admin","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), selectVendor);
 
-router.get("/stats",  protect(["admin", "procurement_officer","vendor"]), getRFQStats);
+router.get("/stats",  protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), getRFQStats);
 
-router.get("/:id", protect(["admin", "procurement_officer", "vendor"]),getRFQById);
+router.get("/:id", protect(["admin", "procurement_officer", "vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]),getRFQById);
 
 module.exports = router;

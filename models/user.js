@@ -41,10 +41,14 @@ const UserSchema = new mongoose.Schema({
     required: [true, 'Industry is required'],
     trim: true
   },
-  role: {
-    type: String,
-    required: [true, 'Role is required'],
-    trim: true
+  role: { 
+    type: String, 
+    required: true,
+    enum: [
+      'IT/Technical', 'Executive (CEO, CFO, etc.)', 'Management', 'Sales/Marketing', 
+      'Operations', 'Human Resources', 'Accounting/Finance', 'Other', 'user','employee'
+    ],
+    default: 'employee'
   },
   phoneNumber: {
     type: String,
@@ -76,6 +80,10 @@ const UserSchema = new mongoose.Schema({
   updatedAt: {
     type: Date,
     default: Date.now
+  },
+   refreshToken: {
+    type: String,
+    default: null
   }
 });
 
@@ -100,13 +108,7 @@ UserSchema.pre('save', function(next) {
 
 // Method to compare passwords
 UserSchema.methods.comparePassword = async function(candidatePassword) {
-    if (!candidatePassword) {
-        throw new Error('No password provided for comparison');
-    }
-    if (!this.password) {
-        throw new Error('No password stored for this user');
-    }
-    return await bcrypt.compare(candidatePassword, this.password);
+  return await bcrypt.compare(candidatePassword, this.password);
 };
 
 const migrateUsers = async () => {

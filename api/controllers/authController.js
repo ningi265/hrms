@@ -19,6 +19,24 @@ const generateToken = (user) => {
     return jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
 };
 
+// Generate Access Token (short expiry)
+const generateAccessToken = (user) => {
+    return jwt.sign(
+        { id: user._id, role: user.role }, 
+        process.env.JWT_SECRET, 
+        { expiresIn: "15m" } // 15 minutes
+    );
+};
+
+// Generate Refresh Token (long expiry)
+const generateRefreshToken = (user) => {
+    return jwt.sign(
+        { id: user._id, role: user.role }, 
+        process.env.JWT_REFRESH_SECRET, 
+        { expiresIn: "7d" } // 7 days
+    );
+};
+
 // Send verification SMS
 exports.sendVerification = async (req, res) => {
     try {
@@ -114,7 +132,7 @@ exports.sendVerification = async (req, res) => {
 
 
   // Verify the phone number with the code
-exports.verifyPhone = async (req, res) => {
+  exports.verifyPhone = async (req, res) => {
     try {
       const { phoneNumber, code } = req.body;
   
@@ -122,11 +140,16 @@ exports.verifyPhone = async (req, res) => {
         return res.status(400).json({ message: "Phone number and code are required" });
       }
   
-      // Find the user by phone number
+      // ✅ Find user by phoneNumber (not by ID)
       const user = await User.findOne({ phoneNumber });
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
+  
+      // (Optional) Redundant check since we already found by phoneNumber
+      // if (user.phoneNumber !== phoneNumber) {
+      //   return res.status(400).json({ message: "Invalid phone number" });
+      // }
   
       // Check if code matches
       if (user.verificationCode !== code) {
@@ -137,15 +160,15 @@ exports.verifyPhone = async (req, res) => {
       user.isVerified = true;
       user.verificationCode = null;
       await user.save({ validateBeforeSave: false });
-
   
-      // You might want to generate a JWT token here for authentication
-      // const token = generateToken(user);
+      // Generate JWT token (if needed)
+      const token = generateToken(user); // Ensure `generateToken` is defined
   
       res.status(200).json({ 
         message: "Phone number verified successfully",
         isVerified: true,
-        // token: token // If you're using JWT
+        user: { id: user._id, email: user.email },
+        token // Include token if generated
       });
   
     } catch (err) {
@@ -158,41 +181,47 @@ exports.verifyPhone = async (req, res) => {
 
 
   // Send verification SMS (Simulation)
-exports.sendVerificationTest = async (req, res) => {
-  try {
-    const { phoneNumber } = req.body;
-
-    if (!phoneNumber) {
-      return res.status(400).json({ message: "Phone number is required" });
+  exports.sendVerificationTest = async (req, res) => {
+    console.log(req.body);
+    try {
+      const { phoneNumber } = req.body;
+  
+      if (!phoneNumber) {
+        return res.status(400).json({ message: "Phone number is required" });
+      }
+  
+      // Find the user by phone number - changed from findById to findOne
+      const user = await User.findOne({ phoneNumber }).select('phoneNumber verificationCode');
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+  
+      // This check is redundant since we already found by phoneNumber
+      // if (user.phoneNumber !== phoneNumber) {
+      //   return res.status(400).json({ message: "Invalid phone number" });
+      // }
+  
+      // Generate verification code
+      const verificationCode = generateVerificationCode();
+      user.verificationCode = verificationCode;
+      await user.save({ validateBeforeSave: false });
+  
+      // Simulate sending SMS
+      console.log(`Simulated SMS to ${phoneNumber}: Your verification code is ${verificationCode}`);
+  
+      res.status(200).json({
+        message: "Verification code 'sent' successfully (simulation)",
+        verificationCode, // Send it back in response for testing only
+        phoneNumber
+      });
+  
+    } catch (err) {
+      console.error("Error in sendVerification (simulation):", err);
+      res.status(500).json({
+        message: err.message || "Failed to send verification code (simulation)"
+      });
     }
-
-    // Find the user by phone number
-    const user = await User.findOne({ phoneNumber }).select('phoneNumber verificationCode');
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Generate verification code
-    const verificationCode = generateVerificationCode();
-    user.verificationCode = verificationCode;
-    await user.save({ validateBeforeSave: false });
-
-    // Simulate sending SMS
-    console.log(`Simulated SMS to ${phoneNumber}: Your verification code is ${verificationCode}`);
-
-    res.status(200).json({
-      message: "Verification code 'sent' successfully (simulation)",
-      verificationCode, // Send it back in response for testing only
-      phoneNumber
-    });
-
-  } catch (err) {
-    console.error("Error in sendVerification (simulation):", err);
-    res.status(500).json({
-      message: err.message || "Failed to send verification code (simulation)"
-    });
-  }
-};
+  };
 
 
 // Register User (updated version)
@@ -250,7 +279,7 @@ exports.register = async (req, res) => {
             firstName,
             lastName,
             email,
-            password: await bcrypt.hash(password, 10),
+            password,
             companyName,
             industry,
             role,
@@ -259,13 +288,24 @@ exports.register = async (req, res) => {
             verificationCode: null // Will be set when SMS is sent
         });
 
+        await newUser.save();
+
+       const token = generateToken(newUser);
+
+        console.log('User role:', newUser.role);
+console.log('Token payload:', { userId: newUser._id, email: newUser.email, isVerified: newUser.isVerified, role: newUser.role || 'user' });
+
         // Don't log the full user object for security
         console.log("New user created:", { id: newUser._id, email: newUser.email });
 
         // Respond without token since user isn't verified yet
         res.status(201).json({ 
             message: "Registration successful. Verification code sent to your phone.",
-            userId: newUser._id,
+            user: {
+              id: newUser._id,
+              email: newUser.email
+            },
+            token,
             nextStep: "verify_phone" // Tell frontend to show verification page
         });
 
@@ -275,40 +315,147 @@ exports.register = async (req, res) => {
     }
 };
 
-// Login User
+// authController.js - Enhanced login with debugging
 exports.login = async (req, res) => {
   try {
+      console.log('Login request received');
+      console.log('Request body:', req.body);
+      
       const { email, password } = req.body;
+      
+      if (!email || !password) {
+          console.log('Missing credentials');
+          return res.status(400).json({ message: "Email and password are required" });
+      }
+      
+      console.log('Looking for user with email:', email);
       
       // Explicitly select the password field
       const user = await User.findOne({ email }).select('+password');
       
+      console.log('User found:', !!user);
+      
       if (!user) {
+          console.log('User not found');
           return res.status(401).json({ message: "Invalid credentials" });
       }
 
+      console.log('User details:');
+      console.log('- Email:', user.email);
+      console.log('- Role:', user.role);
+      console.log('- Has password:', !!user.password);
+      console.log('- Password hash:', user.password);
+      console.log('- Is verified:', user.isVerified);
+
       // Add validation
       if (!user.password) {
+          console.log('User password missing');
           return res.status(401).json({ 
               message: "Account not properly configured" 
           });
       }
 
+      console.log('Comparing passwords...');
       const isMatch = await user.comparePassword(password);
+       console.log('Input password:', password);
+      console.log('Password match result:', isMatch);
+      
       if (!isMatch) {
+          console.log('Password does not match');
+          // Additional debug - try manual comparison
+          try {
+              const manualMatch = await bcrypt.compare(password, user.password);
+              console.log('Manual bcrypt.compare result:', manualMatch);
+          } catch (bcryptError) {
+              console.error('Bcrypt compare error:', bcryptError);
+          }
           return res.status(401).json({ message: "Invalid credentials" });
       }
 
+      console.log('Login successful, generating token...');
+      
+      // Generate token
+      const token = generateToken(user);
+      console.log('Token generated');
+
       // Remove password from response
       user.password = undefined;
-      res.status(200).json({ token: generateToken(user), user });
+      
+      console.log('Sending response...');
+      res.status(200).json({ token, user });
       
   } catch (err) {
+      console.error('Login error:', err);
       res.status(500).json({ 
           message: "Login failed", 
           error: err.message 
       });
   }
+};
+
+
+// Refresh Token Endpoint
+exports.refreshToken = async (req, res) => {
+    try {
+        const { refreshToken } = req.body;
+        
+        if (!refreshToken) {
+            return res.status(401).json({ message: "Refresh token required" });
+        }
+
+        // Verify refresh token
+        let decoded;
+        try {
+            decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+        } catch (error) {
+            return res.status(401).json({ message: "Invalid refresh token" });
+        }
+
+        // Find user and check if refresh token matches
+        const user = await User.findById(decoded.id);
+        if (!user || user.refreshToken !== refreshToken) {
+            return res.status(401).json({ message: "Invalid refresh token" });
+        }
+
+        // Generate new access token
+        const newAccessToken = generateAccessToken(user);
+        
+        res.status(200).json({ 
+            accessToken: newAccessToken
+        });
+        
+    } catch (err) {
+        res.status(500).json({ 
+            message: "Token refresh failed", 
+            error: err.message 
+        });
+    }
+};
+
+// Logout - Clear refresh token
+exports.logout = async (req, res) => {
+    try {
+        const { refreshToken } = req.body;
+        
+        if (refreshToken) {
+            // Find user and clear refresh token
+            const decoded = jwt.decode(refreshToken);
+            if (decoded && decoded.id) {
+                await User.findByIdAndUpdate(
+                    decoded.id, 
+                    { refreshToken: null }
+                );
+            }
+        }
+
+        res.status(200).json({ message: "Logged out successfully" });
+        
+    } catch (err) {
+        res.status(500).json({ 
+            message: "Logout failed", 
+            error: err.message 
+        });
+    }
 };
 
 exports.getDrivers = async (req, res) => {

@@ -8,6 +8,14 @@ router.post("/register", register);
 router.post("/verify",verifyPhone );
 router.post("/resend",resendVerification);
 router.post("/send",sendVerificationTest );
-router.get("/drivers",protect(["procurement_officer", "admin"]),getDrivers);
+router.get("/drivers",protect(["procurement_officer", "admin", "IT/Technical",
+    "Executive (CEO, CFO, etc.)",
+    "Management",
+    "Sales/Marketing",
+    "Operations",
+    "Human Resources",
+    "Accounting/Finance",
+    "Other",
+    "vendor"]),getDrivers);
 
 module.exports = router;
