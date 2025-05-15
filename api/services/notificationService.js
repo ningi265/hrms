@@ -1,42 +1,21 @@
 const nodemailer = require('nodemailer');
-const { google } = require('googleapis');
 const Notification = require("../../models/notification");
 const User = require("../../models/user");
 
-// Set up OAuth2 client
-const oAuth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
-);
-
-oAuth2Client.setCredentials({
-  refresh_token: process.env.GOOGLE_REFRESH_TOKEN
+// Nodemailer transport setup for Gmail with App Password
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_APP_PASSWORD, // Use app password for Gmail
+  },
 });
-
-// Create reusable transporter object
-async function createTransporter() {
-  const accessToken = await oAuth2Client.getAccessToken();
-
-  return nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      type: 'OAuth2',
-      user: process.env.GMAIL_ADDRESS,
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      refreshToken: process.env.GOOGLE_REFRESH_TOKEN,
-      accessToken: accessToken.token
-    }
-  });
-}
 
 // Send email notification using Nodemailer
 const sendEmailNotification = async (userEmail, subject, message) => {
     try {
-        const transporter = await createTransporter();
         await transporter.sendMail({
-            from: `"${process.env.EMAIL_FROM_NAME}" <${process.env.GMAIL_ADDRESS}>`,
+            from: `"${process.env.EMAIL_FROM_NAME}" <${process.env.EMAIL_USER}>`,
             to: userEmail,
             subject: subject,
             text: message,
@@ -207,6 +186,16 @@ const notifyInvoicePayment = async (vendorId, invoice) => {
     }
 };
 
-
-
-module.exports = { sendNotifications, notifyVendorsAboutRFQ, notifyInvoicePayment,notifyInvoiceApproval,notifySelectedVendor,notifyInvoiceSubmitted, notifyVendorPOCreated, notifyPOApproval, notifyPOShipped, notifyPOConfirmed,notifyPODelivered};
+module.exports = { 
+    sendNotifications, 
+    notifyVendorsAboutRFQ, 
+    notifyInvoicePayment,
+    notifyInvoiceApproval,
+    notifySelectedVendor,
+    notifyInvoiceSubmitted, 
+    notifyVendorPOCreated, 
+    notifyPOApproval, 
+    notifyPOShipped, 
+    notifyPOConfirmed,
+    notifyPODelivered
+};

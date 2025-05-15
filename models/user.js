@@ -69,6 +69,14 @@ const UserSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+   emailVerificationCode: {
+    type: String,
+    default: null
+  },
+  emailVerificationCodeExpires: {
+    type: Date,
+    default: null
+  },
   verificationCodeExpires: {
     type: Date,
     default: null
@@ -84,7 +92,14 @@ const UserSchema = new mongoose.Schema({
    refreshToken: {
     type: String,
     default: null
-  }
+  }, companyLogo: {
+    type: String,
+    default: null
+  },
+  signature: {
+    type: String,
+    default: null
+  },
 });
 
 // Hash password before saving
