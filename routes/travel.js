@@ -10,7 +10,7 @@ router.post( '/', protect(["employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.travelRequest);
+        "Accounting/Finance","Sales/Marketing"]), travelController.travelRequest);
 
 // Approval Routes
 router.put( '/:id/supervisor-approval', protect(["admin","procurement_officer","IT/Technical",
@@ -118,6 +118,12 @@ router.post(
   ],
   travelController.submitReconciliation
 );
+
+router.get('/:id', protect(["admin","procurement_officer","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), travelController.getTravelRequestById);
 
 router.post(
   '/:id/reconcile-expenses',

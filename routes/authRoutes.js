@@ -14,6 +14,8 @@ const {
   sendEmailVerificationTest,
   uploadLogo,
   uploadSignature,
+  requestPasswordReset,
+  resetPassword
 } = require("../api/controllers/authController");
 const { protect } = require("../api/middleware/authMiddleware");
 
@@ -55,5 +57,10 @@ router.get("/drivers", protect([
   "Other",
   "vendor"
 ]), getDrivers);
+
+//Password Reset
+router.post("/reset",requestPasswordReset);
+router.post('/reset-password', resetPassword);
+
 
 module.exports = router;

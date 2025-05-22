@@ -61,7 +61,8 @@ const TravelRequestSchema = new mongoose.Schema({
     sentAt: Date,
     recipients: [{
       type: String,
-      enum: ['employee', 'driver', 'manager']
+      enum: ['IT/Technical', 'Executive (CEO, CFO, etc.)', 'Management', 'Sales/Marketing', 
+      'Operations', 'Human Resources', 'Accounting/Finance', 'Other', 'user','employee']
     }],
     subject: String,
     message: String,

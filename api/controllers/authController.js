@@ -6,6 +6,7 @@ const nodemailer = require('nodemailer');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+//const {sendEmailNotification} = require("../services/notificationService");
 
 // Twilio setup
 const twilioClient = twilio(
@@ -24,6 +25,15 @@ const transporter = nodemailer.createTransport({
 
 const generateVerificationCode = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
+// Generate password reset token (expires in 1 hour)
+const generatePasswordResetToken = (user) => {
+    return jwt.sign(
+        { id: user._id },
+        process.env.JWT_RESET_SECRET,
+        { expiresIn: '1h' }
+    );
 };
 
 // Generate JWT
@@ -47,6 +57,150 @@ const generateRefreshToken = (user) => {
         process.env.JWT_REFRESH_SECRET, 
         { expiresIn: "7d" } // 7 days
     );
+};
+
+
+// Send password reset email
+const sendPasswordResetEmail = async (user, resetToken) => {
+    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+    
+    const mailOptions = {
+        from: `"${process.env.EMAIL_FROM_NAME || 'NyasaTech'}" <${process.env.EMAIL_USER}>`,
+        to: user.email,
+        subject: 'Password Reset Request',
+        html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 5px;">
+                <h2 style="color: #333;">Password Reset Request</h2>
+                <p>Hello ${user.firstName || 'there'},</p>
+                <p>We received a request to reset your password. Click the button below to reset it:</p>
+                <div style="margin: 20px 0; text-align: center;">
+                    <a href="${resetUrl}" style="display: inline-block; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px;">Reset Password</a>
+                </div>
+                <p>This link will expire in 1 hour. If you didn't request a password reset, please ignore this email.</p>
+                <p>Alternatively, you can copy and paste this link into your browser:</p>
+                <p style="word-break: break-all;">${resetUrl}</p>
+            </div>
+        `
+    };
+
+    return transporter.sendMail(mailOptions);
+};
+
+const sendEmailNotification = async (userEmail, subject, message) => {
+    try {
+        await transporter.sendMail({
+            from: `"${process.env.EMAIL_FROM_NAME}" <${process.env.EMAIL_USER}>`,
+            to: userEmail,
+            subject: subject,
+            text: message,
+            // You could also add html: '<p>HTML version</p>' if needed
+        });
+        console.log(`Email sent to ${userEmail}`); 
+    } catch (error) {
+        console.error("Nodemailer email sending error:", error);
+    }
+};
+
+
+// Request password reset (sends email with reset link)
+exports.requestPasswordReset = async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        if (!email) {
+            return res.status(400).json({ message: "Email is required" });
+        }
+
+        // Find user by email
+        const user = await User.findOne({ email });
+        if (!user) {
+            // For security, don't reveal if user doesn't exist
+            return res.status(200).json({ 
+                message: "If an account with that email exists, a password reset link has been sent"
+            });
+        }
+
+        // Generate reset token
+        const resetToken = generatePasswordResetToken(user);
+        
+        // Send email with reset link
+        try {
+            await sendPasswordResetEmail(user, resetToken);
+            return res.status(200).json({ 
+                message: "If an account with that email exists, a password reset link has been sent",
+                email: email
+            });
+        } catch (emailError) {
+            console.error("Password reset email error:", emailError);
+            return res.status(500).json({ 
+                message: "Failed to send password reset email" 
+            });
+        }
+
+    } catch (err) {
+        console.error("Error in requestPasswordReset:", err);
+        res.status(500).json({ 
+            message: err.message || "Failed to process password reset request" 
+        });
+    }
+};
+
+
+// Reset password (using token from email)
+exports.resetPassword = async (req, res) => {
+    try {
+        const { token, newPassword } = req.body;
+
+        if (!token || !newPassword) {
+            return res.status(400).json({ 
+                message: "Reset token and new password are required" 
+            });
+        }
+
+        // Verify token
+        let decoded;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_RESET_SECRET);
+        } catch (error) {
+            return res.status(400).json({ 
+                message: "Invalid or expired reset token" 
+            });
+        }
+
+        // Find user
+        const user = await User.findById(decoded.id);
+        if (!user) {
+            return res.status(400).json({ 
+                message: "User not found" 
+            });
+        }
+
+        // Update password
+        user.password = newPassword;
+        await user.save();
+
+        // Optionally send confirmation email
+        try {
+            await sendEmailNotification(
+                user.email,
+                "Password Changed Successfully",
+                "Your password has been successfully updated."
+            );
+        } catch (emailError) {
+            console.error("Password change confirmation email failed:", emailError);
+            // Continue even if confirmation email fails
+        }
+
+        return res.status(200).json({ 
+            message: "Password reset successfully" 
+        });
+
+    } catch (err) {
+        console.error("Error in resetPassword:", err);
+        res.status(500).json({ 
+            message: err.message || "Failed to reset password" 
+        });
+    }
 };
 
 // Send verification email
@@ -502,7 +656,7 @@ exports.register = async (req, res) => {
               email: newUser.email
             },
             token,
-            nextStep: "verify_phone_and_email" // Tell frontend to show verification page
+            nextStep: "verify_email" // Tell frontend to show verification page
         });
 
     } catch (err) {
@@ -656,7 +810,7 @@ exports.logout = async (req, res) => {
 
 exports.getDrivers = async (req, res) => {
     try {
-        const drivers = await User.find({ role: "driver" }).populate("name", "name email");
+        const drivers = await User.find({ role: "Driver" }).populate("firstName", "firstName email");
         res.json(drivers);
     } catch (err) {
         res.status(500).json({ message: "Server error", error: err.message });

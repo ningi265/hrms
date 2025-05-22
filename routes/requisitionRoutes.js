@@ -20,7 +20,7 @@ router.post("/", protect(["employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), createRequisition);
+        "Accounting/Finance","Sales/Marketing"]), createRequisition);
 
 // Employee: Get my requisitions
 router.get("/my", protect(["employee"]), getMyRequisitions);

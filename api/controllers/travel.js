@@ -3,7 +3,8 @@ const mongoose = require('mongoose');
 const { body, validationResult } = require("express-validator");
 const TravelRequest = require("../../models/travel");
 const { protect }=require("../../api/middleware/authMiddleware");
-
+const { sendNotifications } = require('../../api/services/notificationService');
+const User = require("../../models/user");
 
 /// Create a new travel request (local or international)
 exports.travelRequest = async (req, res) => {
@@ -331,25 +332,21 @@ exports.assignDriver = async (req, res) => {
     const { id } = req.params;
     const { driverId } = req.body;
 
-    // Validate input
     if (!driverId) {
       return res.status(400).json({ message: 'Driver ID is required' });
     }
 
-    // Find the travel request
-    const travelRequest = await TravelRequest.findById(id);
+    let travelRequest = await TravelRequest.findById(id);
     if (!travelRequest) {
       return res.status(404).json({ message: 'Travel request not found' });
     }
 
-    // Check if the request is approved (optional business rule)
     if (travelRequest.finalApproval !== 'approved') {
       return res.status(400).json({ 
         message: 'Cannot assign driver to a request that is not finally approved' 
       });
     }
 
-    // Check if the request is already assigned to a driver
     if (travelRequest.assignedDriver) {
       return res.status(400).json({ 
         message: 'This travel request already has an assigned driver',
@@ -357,20 +354,17 @@ exports.assignDriver = async (req, res) => {
       });
     }
 
-    // Update the travel request with the assigned driver
     travelRequest.assignedDriver = driverId;
     await travelRequest.save();
 
+    // Populate driver and employee before sending back
+    travelRequest = await TravelRequest.findById(id)
+      .populate("employee", "name email department")
+      .populate("assignedDriver", "name phone location");
+
     res.status(200).json({
       message: 'Driver assigned successfully',
-      travelRequest: {
-        id: travelRequest._id,
-        employee: travelRequest.employee,
-        assignedDriver: travelRequest.assignedDriver,
-        departureDate: travelRequest.departureDate,
-        returnDate: travelRequest.returnDate,
-        location: travelRequest.location
-      }
+      travelRequest
     });
 
   } catch (error) {
@@ -382,19 +376,41 @@ exports.assignDriver = async (req, res) => {
   }
 };
 
+
 // GET all finally approved requests ready for finance processing
 exports.getFinancePendingRequests = async (req, res) => {
   try {
     const approvedRequests = await TravelRequest.find({
       finalApproval: "approved",
       financeStatus:  { $in: ["pending", "processed"] },
-    }).populate("employee", "name email department");
+    }).populate("employee", "firstName lastName email phoneNumber role ")
+    .populate("assignedDriver", "firstName lastName email phoneNumber");
     res.status(200).json(approvedRequests);
-  } catch (error) {
+  } catch (error) { 
     console.error("Error fetching finance pending requests:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
+
+// GET /api/travel-requests/:id
+exports.getTravelRequestById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const request = await TravelRequest.findById(id)
+      .populate("employee", "fistName email lastName phoneNumber role")
+      .populate("assignedDriver", "firstName phoneNumber lastName email role");
+
+    if (!request) {
+      return res.status(404).json({ message: "Travel request not found" });
+    }
+
+    res.status(200).json(request);
+  } catch (error) {
+    console.error("Error fetching travel request:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 
 // GET all finally approved requests ready for finance processing
 exports.getFinanceProcessedRequests = async (req, res) => {
@@ -1000,7 +1016,7 @@ async function getExpenseBreakdown(userId) {
 
 
 // @desc    Send notifications to relevant parties about travel arrangements
-// @route   POST /api/v1/travel-requests/:id/send-notifications
+// @route   POST /api/travel-requests/:id/send-notifications
 // @access  Private (PO/admin)
 exports.sendTravelNotifications = async (req, res) => {
   try {
@@ -1035,24 +1051,43 @@ exports.sendTravelNotifications = async (req, res) => {
         }
       },
       { new: true }
-    ).populate('employee', 'name email')
-     .populate('assignedDriver', 'name email phone');
+    ).populate('employee', 'firstName email phoneNumber')
+     .populate('assignedDriver', 'firstName email phoneNumber');
 
     if (!travelRequest) {
       return res.status(404).json({ message: 'Travel request not found' });
     }
 
-    // SIMULATE EMAIL SENDING WITH CONSOLE LOGS
-    console.log('\n=== SIMULATING FLEET NOTIFICATIONS ===');
-    console.log(`Travel Request ID: ${id}`);
-    console.log(`Subject: "${subject}"`);
-    console.log('Recipients:', recipients.join(', '));
-    console.log('Notification saved to travel request:', travelRequest.fleetNotification);
-    console.log('\n=== END OF SIMULATION ===\n');
+    // Validate recipient IDs are valid ObjectIds
+    const validRecipients = recipients.filter(recipientId => 
+      mongoose.Types.ObjectId.isValid(recipientId)
+    );
+
+    if (validRecipients.length === 0) {
+      return res.status(400).json({ message: 'No valid recipient IDs provided' });
+    }
+
+    // Send notifications to all valid recipients
+    const notificationPromises = validRecipients.map(async recipientId => {
+      try {
+        const user = await User.findById(recipientId);
+        if (user) {
+          await sendNotifications(
+            recipientId,
+            subject,
+            message
+          );
+        }
+      } catch (error) {
+        console.error(`Error sending notification to user ${recipientId}:`, error);
+      }
+    });
+
+    await Promise.all(notificationPromises);
 
     res.status(200).json({
       success: true,
-      message: 'Fleet notifications processed successfully',
+      message: 'Fleet notifications sent successfully',
       data: {
         fleetNotification: travelRequest.fleetNotification,
         travelRequestStatus: travelRequest.status
@@ -1066,8 +1101,9 @@ exports.sendTravelNotifications = async (req, res) => {
       message: 'Server error while sending fleet notifications',
       error: error.message 
     });
-  }
+  }   
 };
+
 
 // @desc    Submit travel reconciliation
 // @route   POST /api/travel-requests/:id/reconcile
