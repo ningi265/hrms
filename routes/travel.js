@@ -61,12 +61,12 @@ router.get('/finance/pending', protect(["admin","procurement_officer","IT/Techni
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.getFinancePendingRequests);
+        "Accounting/Finance","Sales/Marketing"]), travelController.getFinancePendingRequests);
 router.get('/finance/processed', protect(["admin","employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.getFinanceProcessedRequestsUser);
+        "Accounting/Finance","Sales/Marketing"]), travelController.getFinanceProcessedRequestsUser);
 router.get('/employee/:employeeId/reconcile-pending', protect, travelController.getReconcilePendingRequests);
 router.get('/employee/processed', protect, travelController.getEmployeeProcessedRequests);
 router.put( '/:id/expenses', protect(["employee","procurement_officer","IT/Technical",
