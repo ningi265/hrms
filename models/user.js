@@ -46,7 +46,7 @@ const UserSchema = new mongoose.Schema({
     required: true,
     enum: [
       'IT/Technical', 'Executive (CEO, CFO, etc.)', 'Management', 'Sales/Marketing','Driver', 
-      'Operations', 'Human Resources', 'Accounting/Finance', 'Other', 'user','employee'
+      'Operations', 'Human Resources', 'Accounting/Finance', 'Other', 'user','employee','Vendor'
     ],
     default: 'employee'
   },

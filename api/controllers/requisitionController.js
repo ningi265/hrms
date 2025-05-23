@@ -1,36 +1,114 @@
 const Requisition = require("../../models/requisition");
 const {sendNotifications} = require("../services/notificationService");
 
+
+
 // Submit a new requisition (Employee)
 exports.createRequisition = async (req, res) => {
+    // Check for user ID in the correct property
+    if (!req.user?._id) {
+        return res.status(401).json({ message: "Authentication required" });
+    }
+    
+    console.log('Received data:', req.body);
+    console.log('User from JWT:', req.user);
+    
     try {
-        const { itemName, quantity, budgetCode, urgency, preferredSupplier, reason } = req.body;
-
-        const newRequisition = await Requisition.create({
-            employee: req.user.id, // User from JWT
+        const { 
             itemName,
             quantity,
             budgetCode,
             urgency,
             preferredSupplier,
             reason,
+            category,
+            estimatedCost,
+            deliveryDate,
+            department,
+            environmentalImpact
+        } = req.body;
+
+        // Validation
+        if (!itemName) {
+            return res.status(400).json({ message: "Item name is required" });
+        }
+        if (!budgetCode) {
+            return res.status(400).json({ message: "Budget code is required" });
+        }
+        if (!reason) {
+            return res.status(400).json({ message: "Business justification is required" });
+        }
+        if (!department) {
+            return res.status(400).json({ message: "Department is required" });
+        }
+
+        // Convert string numbers to actual numbers
+        const numericQuantity = parseInt(quantity) || 1;
+        
+        // Handle estimated cost
+        let numericEstimatedCost = 0;
+        if (estimatedCost) {
+            numericEstimatedCost = parseFloat(estimatedCost.toString().replace(/[^0-9.]/g, ''));
+        }
+        
+        if (numericEstimatedCost <= 0) {
+            return res.status(400).json({ message: "Estimated cost must be greater than 0" });
+        }
+
+        console.log('Creating requisition with user ID:', req.user._id);
+
+        const newRequisition = await Requisition.create({
+            employee: req.user._id, // Use _id instead of id
+            itemName,
+            quantity: numericQuantity,
+            budgetCode,
+            urgency: urgency || 'medium',
+            preferredSupplier: preferredSupplier || 'No preference',
+            reason,
+            category,
+            estimatedCost: numericEstimatedCost,
+            deliveryDate: deliveryDate || null,
+            department,
+            environmentalImpact: environmentalImpact || 'No specific requirements',
+            status: "pending"
         });
 
-        res.status(201).json({ message: "Requisition submitted successfully", requisition: newRequisition });
+        console.log('Created requisition:', newRequisition);
+
+        res.status(201).json({ 
+            message: "Requisition submitted successfully", 
+            requisition: newRequisition 
+        });
+
     } catch (err) {
-        res.status(500).json({ message: "Server error", error: err.message });
+        console.error('Error creating requisition:', err);
+        res.status(500).json({ 
+            message: "Server error", 
+            error: err.message,
+            stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+        });
     }
 };
-
 // Get all requisitions (For Procurement Officers & Admins)
 exports.getAllRequisitions = async (req, res) => {
     try {
-        const requisitions = await Requisition.find().populate("employee", "name email");
+        const requisitions = await Requisition.find().populate("employee", "firstName lastName email");
         res.json(requisitions);
     } catch (err) {
         res.status(500).json({ message: "Server error", error: err.message });
     }
 };
+
+//pending
+exports.getAllPendingRequisitions = async (req, res) => {
+    try {
+        const requisitions = await Requisition.find({status:"pending"}).populate("employee", "firstName lastName email");
+        res.json(requisitions);
+    } catch (err) {
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+};
+
 
 
 // Approve a requisition
@@ -103,9 +181,9 @@ exports.getRejectedRequisitions = async (req, res) => {
 };
 
 // Get all pending requisitions
-exports.getPendingRequisitions = async (req, res) => {
+exports.getAllPendingRequisitions = async (req, res) => {
     try {
-        const requisitions = await Requisition.find({ status: "pending" }).populate("employee", "name email");
+        const requisitions = await Requisition.find({status:"pending"}).populate("employee", "firstName lastName email");
         res.json(requisitions);
     } catch (err) {
         res.status(500).json({ message: "Server error", error: err.message });

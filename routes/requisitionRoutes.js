@@ -8,6 +8,7 @@ const {
     getApprovedRequisitions,
     getRejectedRequisitions,
     getPendingRequisitions,
+     getAllPendingRequisitions,
     getRequisitionStats,
     travelRequisition
 } = require("../api/controllers/requisitionController");
@@ -61,6 +62,12 @@ router.get("/pending", protect(["admin", "procurement_officer","IT/Technical",
         "Management",
         "Human Resources",
         "Accounting/Finance"]), getPendingRequisitions);
+
+router.get("/pendings", protect(["admin", "procurement_officer","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), getAllPendingRequisitions);
 router.get("/stats", protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",

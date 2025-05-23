@@ -20,14 +20,14 @@ router.post("/", protect(["procurement_officer", "admin","IT/Technical",
         "Accounting/Finance"]), createRFQ);
 
 // Get all RFQs (Procurement Officers & Admins)
-router.get("/", protect(["procurement_officer", "admin", "vendor","IT/Technical",
+router.get("/", protect(["procurement_officer", "admin", "Vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
         "Accounting/Finance"]), getAllRFQs);
 
 // Vendor submits a quote
-router.post("/:id/quote", protect(["vendor", "admin"]), submitQuote);
+router.post("/:id/quote", protect(["Vendor", "admin"]), submitQuote);
 
 // Select the best vendor (Procurement Officers & Admins)
 router.put("/:id/select", protect(["procurement_officer", "admin","IT/Technical",
