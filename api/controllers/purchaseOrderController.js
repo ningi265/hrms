@@ -21,7 +21,7 @@ exports.createPO = async (req, res) => {
       const po = await PurchaseOrder.create({
         rfq: rfq._id,
         vendor: rfq.selectedVendor,
-        procurementOfficer: req.user.id,
+        procurementOfficer: req.user._id,
         items,
         totalAmount,
       });

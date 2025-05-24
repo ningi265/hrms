@@ -13,7 +13,7 @@ const { protect } = require("../api/middleware/authMiddleware");
 const router = express.Router();
 
 // Vendor submits an invoice
-router.post("/", protect(["vendor"]), submitInvoice);
+router.post("/", protect(["Vendor"]), submitInvoice);
 
 router.get("/stats", protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",

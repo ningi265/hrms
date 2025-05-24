@@ -56,7 +56,7 @@ exports.addVendor = async (req, res) => {
 
 exports.getVendorByUser = async (req, res) => {
     try {
-        const vendor = await Vendor.findOne({ user: req.user.id });
+        const vendor = await Vendor.findOne({ user: req.user._id });
         if (!vendor) return res.status(404).json({ message: "Vendor not found" });
 
         res.json(vendor);

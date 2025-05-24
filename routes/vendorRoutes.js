@@ -16,7 +16,7 @@ router.get("/", protect(["admin", "procurement_officer","IT/Technical",
         "Human Resources",
         "Accounting/Finance"]), getVendors);
 
-router.get("/me", protect(["admin", "procurement_officer", "vendor","IT/Technical",
+router.get("/me", protect(["admin", "procurement_officer", "Vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",

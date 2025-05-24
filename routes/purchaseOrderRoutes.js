@@ -21,13 +21,13 @@ router.post("/", protect(["procurement_officer","IT/Technical",
         "Human Resources",
         "Accounting/Finance"]), createPO);
 
-router.get("/stats", protect(["admin","vendor","IT/Technical",
+router.get("/stats", protect(["admin","Vendor","IT/Technical",
     "Executive (CEO, CFO, etc.)",
     "Management",
     "Human Resources",
     "Accounting/Finance"]), getPOStats);
 
-router.put("/:id/vendor/confirm", protect(["admin","vendor","IT/Technical",
+router.put("/:id/vendor/confirm", protect(["admin","Vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
@@ -36,7 +36,7 @@ router.put("/:id/vendor/confirm", protect(["admin","vendor","IT/Technical",
 // Approve PO (Admin Only)
 router.put("/:id/approve", protect(["admin"]), approvePO);
 
-router.put("/:id/delivery-status", protect(["admin", "vendor"]), updateDeliveryStatus);
+router.put("/:id/delivery-status", protect(["admin", "Vendor"]), updateDeliveryStatus);
 
 
 router.put("/:id/delivery-confirmed", protect(["admin", "procurement_officer","IT/Technical",
@@ -49,21 +49,21 @@ router.put("/:id/delivery-confirmed", protect(["admin", "procurement_officer","I
 router.put("/:id/reject", protect(["admin"]), rejectPO);
 
 // Get All POs
-router.get("/", protect(["procurement_officer", "admin", "vendor","IT/Technical",
+router.get("/", protect(["procurement_officer", "admin", "Vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
         "Accounting/Finance"]), getAllPOs);
 
 // Get Single PO
-router.get("/:id", protect(["procurement_officer", "admin", "vendor","IT/Technical",
+router.get("/:id", protect(["procurement_officer", "admin", "Vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
         "Accounting/Finance"]), getPOById);
 
 // Vendor updates delivery status
-router.put("/:id/delivery", protect(["vendor"]), updateDeliveryStatus);
+router.put("/:id/delivery", protect(["Vendor"]), updateDeliveryStatus);
 
 // Procurement officer confirms delivery
 router.put("/:id/confirm", protect(["procurement_officer","IT/Technical",

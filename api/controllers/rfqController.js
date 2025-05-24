@@ -158,9 +158,9 @@ exports.submitQuote = async (req, res) => {
         }
 
         // Find the vendor based on `req.user.id`
-        const vendorEntry = rfq.vendors.find(vendor => vendor.user.toString() === req.user.id);
+        const vendorEntry = rfq.vendors.find(vendor => vendor.user.toString() === req.user._id);
         if (!vendorEntry) {
-            console.log("Vendor ID mismatch:", req.user.id, "not in", rfq.vendors.map(v => v.user.toString()));
+            console.log("Vendor ID mismatch:", req.user._id, "not in", rfq.vendors.map(v => v.user.toString()));
             return res.status(403).json({ message: "You are not invited to submit a quote for this RFQ." });
         }
 
