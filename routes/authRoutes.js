@@ -15,7 +15,21 @@ const {
   uploadLogo,
   uploadSignature,
   requestPasswordReset,
-  resetPassword
+  resetPassword,
+
+  getProfile,
+  updateProfile,
+  updateSecuritySettings,
+  changePassword,
+  updateEmail,
+  getUserStats,
+  deleteAccount,
+  getPaymentMethods,
+  addPaymentMethod,
+  updatePaymentMethod,
+  deletePaymentMethod,
+  setDefaultPaymentMethod,
+  uploadAvatar
 } = require("../api/controllers/authController");
 const { protect } = require("../api/middleware/authMiddleware");
 
@@ -43,6 +57,7 @@ router.put("/onboarding/logo", uploadLogo);
 router.put("/onboarding/signature", uploadSignature);
 
 
+
 // Protected routes
 router.get("/drivers", protect([
   "procurement_officer", 
@@ -63,4 +78,72 @@ router.post("/reset",requestPasswordReset);
 router.post('/reset-password', resetPassword);
 
 
+// Profile Management Routes (all require authentication)
+router.get('/profile', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), getProfile);
+router.put('/profile', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), updateProfile);
+router.put('/security', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), updateSecuritySettings);
+router.put('/change-password', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), changePassword);
+router.put('/update-email', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), updateEmail);
+router.get('/stats', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), getUserStats);
+router.delete('/account',protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), deleteAccount);
+router.post('/upload-avatar', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]),uploadAvatar);
+
+// Payment Methods Routes
+router.get('/payment-methods',protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), getPaymentMethods);
+router.post('/payment-methods',protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), addPaymentMethod);
+router.put('/payment-methods/:paymentMethodId',protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), updatePaymentMethod);
+router.delete('/payment-methods/:paymentMethodId',protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), deletePaymentMethod);
+router.put('/payment-methods/:paymentMethodId/default', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]),setDefaultPaymentMethod);
 module.exports = router;

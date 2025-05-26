@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const path = require('path');
 
 // Load environment variables
 dotenv.config();
@@ -14,7 +15,8 @@ const app = express();
 
 // Middleware
 app.use(cors());
-app.use(bodyParser.json()); // Parse JSON sdata
+app.use(bodyParser.json()); 
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Connect to MongoDB
 const uri = process.env.MONGO_URI || "mongodb+srv://brianmtonga592:TXrlxC13moNMMIOh@lostandfound1.f6vrf.mongodb.net/?retryWrites=true&w=majority&appName=lostandfound1"

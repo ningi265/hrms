@@ -1,7 +1,319 @@
 const Vendor = require("../../models/vendor");
 const User = require("../../models/user");
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
-// Add a new vendor
+// Configure multer for file upload
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const uploadDir = 'uploads/vendor-documents/';
+        // Create directory if it doesn't exist
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+        // Generate unique filename
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'power-of-attorney-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const fileFilter = (req, file, cb) => {
+    // Accept only PDF, DOC, DOCX files
+    const allowedTypes = ['.pdf', '.doc', '.docx'];
+    const fileExt = path.extname(file.originalname).toLowerCase();
+    
+    if (allowedTypes.includes(fileExt)) {
+        cb(null, true);
+    } else {
+        cb(new Error('Only PDF, DOC, and DOCX files are allowed'), false);
+    }
+};
+
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: 5 * 1024 * 1024 // 5MB limit
+    },
+    fileFilter: fileFilter
+});
+
+// Register a new vendor with complete registration information
+exports.registerVendor = async (req, res) => {
+    try {
+        const {
+            
+            // Registration form data
+            countryOfRegistration,
+            businessName,
+            taxpayerIdentificationNumber,
+            tinIssuedDate,
+            companyType,
+            formOfBusiness,
+            ownershipType,
+            selectBusiness,
+            registrationNumber,
+            registrationIssuedDate,
+            termsAccepted
+        } = req.body;
+
+        console.log("Vendor registration request:", req.body);
+
+        // Validate required fields
+        if (!businessName || !taxpayerIdentificationNumber || !registrationNumber) {
+            return res.status(400).json({ 
+                message: "Missing required fields: businessName, taxpayerIdentificationNumber, registrationNumber" 
+            });
+        }
+
+        if (!termsAccepted) {
+            return res.status(400).json({ 
+                message: "Terms and conditions must be accepted" 
+            });
+        }
+
+        // Check if vendor already exists with same email, TIN, or registration number
+        const existingVendor = await Vendor.findOne({
+            $or: [
+                { email },
+                { taxpayerIdentificationNumber },
+                { registrationNumber }
+            ]
+        });
+
+        if (existingVendor) {
+            let message = "Vendor already exists with this ";
+            if (existingVendor.email === email) message += "email";
+            else if (existingVendor.taxpayerIdentificationNumber === taxpayerIdentificationNumber) message += "TIN";
+            else if (existingVendor.registrationNumber === registrationNumber) message += "registration number";
+            
+            return res.status(400).json({ message });
+        }
+
+        // Create user account for the vendor
+        const user = await User.create({
+            firstName: firstName || businessName.split(' ')[0],
+            lastName: lastName || businessName.split(' ').slice(1).join(' ') || 'Company',
+            email,
+            password,
+            phoneNumber,
+            companyName: businessName,
+            industry: selectBusiness || "General",
+            role: "employee",
+        });
+
+        // Handle file upload information
+        let powerOfAttorneyInfo = {};
+        if (req.file) {
+            powerOfAttorneyInfo = {
+                fileName: req.file.originalname,
+                filePath: req.file.path,
+                fileSize: req.file.size,
+                uploadDate: new Date()
+            };
+        }
+
+        // Create vendor with registration information
+        const vendor = await Vendor.create({
+            // Basic vendor info
+            name: businessName,
+            email,
+            phone: phoneNumber,
+            address: `${countryOfRegistration}`, // Basic address, can be expanded
+            categories: [selectBusiness],
+            user: user._id,
+            
+            // Registration information
+            countryOfRegistration,
+            businessName,
+            taxpayerIdentificationNumber,
+            tinIssuedDate: new Date(tinIssuedDate),
+            companyType,
+            formOfBusiness,
+            ownershipType,
+            businessCategory: selectBusiness,
+            registrationNumber,
+            registrationIssuedDate: new Date(registrationIssuedDate),
+            
+            // Document
+            powerOfAttorney: powerOfAttorneyInfo,
+            
+            // Terms
+            termsAccepted: true,
+            termsAcceptedDate: new Date(),
+            
+            // Status
+            registrationStatus: "pending",
+            submissionDate: new Date()
+        });
+
+        res.status(201).json({ 
+            message: "Vendor registration submitted successfully. You will receive notification once reviewed.", 
+            vendor: {
+                id: vendor._id,
+                businessName: vendor.businessName,
+                email: vendor.email,
+                registrationStatus: vendor.registrationStatus,
+                submissionDate: vendor.submissionDate
+            }
+        });
+
+    } catch (err) {
+        console.error("Error registering vendor:", err);
+        
+        // Clean up uploaded file if vendor creation failed
+        if (req.file && fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
+        
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+};
+
+// Get vendor registration status
+exports.getRegistrationStatus = async (req, res) => {
+    try {
+        const { email } = req.query;
+        
+        if (!email) {
+            return res.status(400).json({ message: "Email is required" });
+        }
+
+        const vendor = await Vendor.findOne({ email })
+            .select('businessName email registrationStatus submissionDate approvalDate rejectionReason');
+        
+        if (!vendor) {
+            return res.status(404).json({ message: "Vendor registration not found" });
+        }
+
+        res.json({
+            businessName: vendor.businessName,
+            email: vendor.email,
+            status: vendor.registrationStatus,
+            submissionDate: vendor.submissionDate,
+            approvalDate: vendor.approvalDate,
+            rejectionReason: vendor.rejectionReason
+        });
+
+    } catch (err) {
+        console.error("Error getting registration status:", err);
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+};
+
+// Get all pending vendor registrations (for admin)
+exports.getPendingRegistrations = async (req, res) => {
+    try {
+        const pendingVendors = await Vendor.find({ registrationStatus: "pending" })
+            .populate('user', 'firstName lastName email')
+            .sort({ submissionDate: -1 });
+
+        res.json(pendingVendors);
+    } catch (err) {
+        console.error("Error getting pending registrations:", err);
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+};
+
+// Approve vendor registration (admin only)
+exports.approveVendor = async (req, res) => {
+    try {
+        const { vendorId } = req.params;
+        const reviewerId = req.user._id; // Assuming admin user is authenticated
+
+        const vendor = await Vendor.findById(vendorId);
+        if (!vendor) {
+            return res.status(404).json({ message: "Vendor not found" });
+        }
+
+        if (vendor.registrationStatus !== "pending") {
+            return res.status(400).json({ message: "Vendor registration is not pending" });
+        }
+
+        await vendor.approve(reviewerId);
+
+        // Here you could send approval email to vendor
+        
+        res.json({ 
+            message: "Vendor approved successfully", 
+            vendor: {
+                id: vendor._id,
+                businessName: vendor.businessName,
+                status: vendor.registrationStatus,
+                approvalDate: vendor.approvalDate
+            }
+        });
+
+    } catch (err) {
+        console.error("Error approving vendor:", err);
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+};
+
+// Reject vendor registration (admin only)
+exports.rejectVendor = async (req, res) => {
+    try {
+        const { vendorId } = req.params;
+        const { reason } = req.body;
+        const reviewerId = req.user._id;
+
+        if (!reason) {
+            return res.status(400).json({ message: "Rejection reason is required" });
+        }
+
+        const vendor = await Vendor.findById(vendorId);
+        if (!vendor) {
+            return res.status(404).json({ message: "Vendor not found" });
+        }
+
+        if (vendor.registrationStatus !== "pending") {
+            return res.status(400).json({ message: "Vendor registration is not pending" });
+        }
+
+        await vendor.reject(reason, reviewerId);
+
+        // Here you could send rejection email to vendor
+        
+        res.json({ 
+            message: "Vendor registration rejected", 
+            vendor: {
+                id: vendor._id,
+                businessName: vendor.businessName,
+                status: vendor.registrationStatus,
+                rejectionReason: vendor.rejectionReason
+            }
+        });
+
+    } catch (err) {
+        console.error("Error rejecting vendor:", err);
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+};
+
+// Get vendor details by ID
+exports.getVendorDetails = async (req, res) => {
+    try {
+        const { vendorId } = req.params;
+        
+        const vendor = await Vendor.findById(vendorId)
+            .populate('user', 'firstName lastName email phoneNumber')
+            .populate('reviewedBy', 'firstName lastName');
+
+        if (!vendor) {
+            return res.status(404).json({ message: "Vendor not found" });
+        }
+
+        res.json(vendor);
+    } catch (err) {
+        console.error("Error getting vendor details:", err);
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+};
+
+// Original methods (keeping for compatibility)
 exports.addVendor = async (req, res) => {
     try {
         const { 
@@ -14,37 +326,47 @@ exports.addVendor = async (req, res) => {
             password,
             companyName,
             industry,
-            role = "employee" // Default to "employee" since "Vendor" is not in enum
+            role = "employee"
         } = req.body;
         
         console.log("req body", req.body);
 
-        // Check if the vendor already exists
         const existingVendor = await Vendor.findOne({ email });
         if (existingVendor) {
             return res.status(400).json({ message: "Vendor with this email already exists" });
         }
 
-        // Create a user account for the vendor
         const user = await User.create({
             firstName,
             lastName,
             email,
             password,
-            phoneNumber, // Fixed: use phoneNumber instead of phone
-            companyName: companyName || `${firstName} ${lastName} Company`, // Provide default if not given
-            industry: industry || "General", // Provide default if not given
-            role: "employee", // Use valid enum value
+            phoneNumber,
+            companyName: companyName || `${firstName} ${lastName} Company`,
+            industry: industry || "General",
+            role: "employee",
         });
 
-        // Create the vendor object and link it to the user account
         const vendor = await Vendor.create({
-            name: `${firstName || ''} ${lastName || ''}`.trim() || 'Unnamed Vendor', // Safely combine names
+            name: `${firstName || ''} ${lastName || ''}`.trim() || 'Unnamed Vendor',
             email,
-            phone: phoneNumber, // Map phoneNumber to phone for vendor
+            phone: phoneNumber,
             address: address || '',
             categories: Array.isArray(categories) ? categories : [],
-            user: user._id, // Link the vendor to the user account
+            user: user._id,
+            businessName: companyName || `${firstName} ${lastName} Company`,
+            taxpayerIdentificationNumber: `TIN-${Date.now()}`, // Temporary TIN
+            registrationNumber: `REG-${Date.now()}`, // Temporary registration
+            tinIssuedDate: new Date(),
+            registrationIssuedDate: new Date(),
+            companyType: "Private Limited Company",
+            formOfBusiness: "Limited Liability Company",
+            ownershipType: "Private Ownership",
+            businessCategory: industry || "Other",
+            countryOfRegistration: "Malawi",
+            registrationStatus: "approved", // Auto-approve for old method
+            termsAccepted: true,
+            termsAcceptedDate: new Date()
         });
 
         res.status(201).json({ message: "Vendor added successfully", vendor });
@@ -65,7 +387,6 @@ exports.getVendorByUser = async (req, res) => {
     }
 };
 
-// Get all vendors
 exports.getVendors = async (req, res) => {
     try {
         const vendors = await Vendor.find();
@@ -75,7 +396,6 @@ exports.getVendors = async (req, res) => {
     }
 };
 
-// Update a vendor
 exports.updateVendor = async (req, res) => {
     try {
         const vendor = await Vendor.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -87,21 +407,24 @@ exports.updateVendor = async (req, res) => {
     }
 };
 
-// Delete a vendor
 exports.deleteVendor = async (req, res) => {
     try {
         const vendorId = req.params.id;
         
-        // Find the vendor first to get the associated user ID
         const vendor = await Vendor.findById(vendorId);
         if (!vendor) {
             return res.status(404).json({ message: "Vendor not found" });
         }
 
-        // Delete the vendor
+        // Delete associated file if exists
+        if (vendor.powerOfAttorney && vendor.powerOfAttorney.filePath) {
+            if (fs.existsSync(vendor.powerOfAttorney.filePath)) {
+                fs.unlinkSync(vendor.powerOfAttorney.filePath);
+            }
+        }
+
         await Vendor.findByIdAndDelete(vendorId);
         
-        // Optionally delete the associated user account as well
         if (vendor.user) {
             await User.findByIdAndDelete(vendor.user);
         }
@@ -112,3 +435,6 @@ exports.deleteVendor = async (req, res) => {
         res.status(500).json({ message: "Server error", error: err.message });
     }
 };
+
+// Export multer upload middleware
+exports.uploadPowerOfAttorney = upload.single('powerOfAttorney');

@@ -59,6 +59,50 @@ const generateRefreshToken = (user) => {
     );
 };
 
+// Configure storage for avatars
+const avatarStorage = multer.diskStorage({
+  destination: function(req, file, cb) {
+    const dir = './uploads/avatars';
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: function(req, file, cb) {
+    const userId = req.user.id;
+    const timestamp = Date.now();
+    const fileExt = path.extname(file.originalname).toLowerCase();
+    cb(null, `avatar_${userId}_${timestamp}${fileExt}`);
+  }
+});
+
+// File filter for avatars
+const avatarFileFilter = (req, file, cb) => {
+  const allowedMimeTypes = [
+    'image/jpeg', 
+    'image/png', 
+    'image/gif', 
+    'image/webp',
+    'image/jpg'
+  ];
+  
+  if (allowedMimeTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file format. Please upload JPEG, PNG, GIF, or WebP files only.'), false);
+  }
+};
+
+// Multer middleware for avatar upload
+const uploadAvatarMiddleware = multer({
+  storage: avatarStorage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+    files: 1
+  },
+  fileFilter: avatarFileFilter,
+}).single('avatar');
+
 
 // Send password reset email
 const sendPasswordResetEmail = async (user, resetToken) => {
@@ -98,6 +142,367 @@ const sendEmailNotification = async (userEmail, subject, message) => {
         console.log(`Email sent to ${userEmail}`); 
     } catch (error) {
         console.error("Nodemailer email sending error:", error);
+    }
+};
+
+
+// =======================
+// PROFILE MANAGEMENT ENDPOINTS
+// =======================
+
+// Get user profile
+exports.getProfile = async (req, res) => {
+    try {
+        const userId = req.user._id; // From auth middleware
+        
+        const user = await User.findById(userId).select('-password -verificationCode -emailVerificationCode -refreshToken');
+        
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        res.status(200).json({
+            success: true,
+            user: user // Remove .getPublicProfile() call
+        });
+        
+    } catch (err) {
+        console.error("Error in getProfile:", err);
+        res.status(500).json({ 
+            message: "Failed to fetch profile", 
+            error: err.message 
+        });
+    }
+};
+
+// Update user profile
+exports.updateProfile = async (req, res) => {
+    try {
+        const userId = req.user._id; // From auth middleware
+        const updateData = req.body;
+        console.log(req.body);
+        
+        // Fields that can be updated
+        const allowedUpdates = [
+            'firstName', 'lastName', 'phone', 'address', 'city', 'state', 
+            'zipCode', 'country', 'company', 'jobTitle', 'bio', 'website', 
+            'linkedin', 'twitter'
+        ];
+        
+        // Filter out non-allowed fields
+        const filteredUpdates = {};
+        allowedUpdates.forEach(field => {
+            if (updateData[field] !== undefined) {
+                filteredUpdates[field] = updateData[field];
+            }
+        });
+        
+        // Add updatedAt timestamp
+        filteredUpdates.updatedAt = Date.now();
+        
+        const updatedUser = await User.findByIdAndUpdate(
+            userId,
+            filteredUpdates,
+            { 
+                new: true, 
+                runValidators: true,
+                select: '-password -verificationCode -emailVerificationCode -refreshToken'
+            }
+        );
+        
+        if (!updatedUser) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        res.status(200).json({
+            success: true,
+            message: "Profile updated successfully",
+            user: updatedUser // Remove .getPublicProfile() call
+        });
+        
+    } catch (err) {
+        console.error("Error in updateProfile:", err);
+        res.status(500).json({ 
+            message: "Failed to update profile", 
+            error: err.message 
+        });
+    }
+};
+
+// Update security settings
+exports.updateSecuritySettings = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { twoFactorEnabled, loginNotifications, activityNotifications } = req.body;
+        
+        const updateData = {};
+        
+        if (typeof twoFactorEnabled === 'boolean') {
+            updateData.twoFactorEnabled = twoFactorEnabled;
+        }
+        if (typeof loginNotifications === 'boolean') {
+            updateData.loginNotifications = loginNotifications;
+        }
+        if (typeof activityNotifications === 'boolean') {
+            updateData.activityNotifications = activityNotifications;
+        }
+        
+        updateData.updatedAt = Date.now();
+        
+        const updatedUser = await User.findByIdAndUpdate(
+            userId,
+            updateData,
+            { 
+                new: true,
+                select: '-password -verificationCode -emailVerificationCode -refreshToken'
+            }
+        );
+        
+        if (!updatedUser) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        res.status(200).json({
+            success: true,
+            message: "Security settings updated successfully",
+            user: updatedUser // Remove .getPublicProfile() call
+        });
+        
+    } catch (err) {
+        console.error("Error in updateSecuritySettings:", err);
+        res.status(500).json({ 
+            message: "Failed to update security settings", 
+            error: err.message 
+        });
+    }
+};
+
+// Change password
+exports.changePassword = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { currentPassword, newPassword } = req.body;
+        
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({ 
+                message: "Current password and new password are required" 
+            });
+        }
+        
+        // Find user with password field
+        const user = await User.findById(userId).select('+password');
+        
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        // Verify current password
+        const isCurrentPasswordValid = await user.comparePassword(currentPassword);
+        
+        if (!isCurrentPasswordValid) {
+            return res.status(400).json({ message: "Current password is incorrect" });
+        }
+        
+        // Validate new password strength
+        if (newPassword.length < 8) {
+            return res.status(400).json({ 
+                message: "New password must be at least 8 characters long" 
+            });
+        }
+        
+        // Update password
+        user.password = newPassword;
+        user.updatedAt = Date.now();
+        await user.save();
+        
+        // Optionally send notification email
+        try {
+            await sendEmailNotification(
+                user.email,
+                "Password Changed Successfully",
+                "Your password has been successfully updated."
+            );
+        } catch (emailError) {
+            console.error("Password change notification email failed:", emailError);
+        }
+        
+        res.status(200).json({
+            success: true,
+            message: "Password changed successfully"
+        });
+        
+    } catch (err) {
+        console.error("Error in changePassword:", err);
+        res.status(500).json({ 
+            message: "Failed to change password", 
+            error: err.message 
+        });
+    }
+};
+
+// Update email (requires verification)
+exports.updateEmail = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { newEmail, password } = req.body;
+        
+        if (!newEmail || !password) {
+            return res.status(400).json({ 
+                message: "New email and password are required" 
+            });
+        }
+        
+        // Find user with password field
+        const user = await User.findById(userId).select('+password');
+        
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        // Verify password
+        const isPasswordValid = await user.comparePassword(password);
+        
+        if (!isPasswordValid) {
+            return res.status(400).json({ message: "Password is incorrect" });
+        }
+        
+        // Check if new email is already in use
+        const existingUser = await User.findOne({ email: newEmail });
+        if (existingUser && existingUser._id.toString() !== userId) {
+            return res.status(400).json({ message: "Email is already in use" });
+        }
+        
+        // Generate verification code for new email
+        const verificationCode = generateVerificationCode();
+        
+        // Update user with new email (unverified) and verification code
+        user.email = newEmail;
+        user.isEmailVerified = false;
+        user.emailVerificationCode = verificationCode;
+        user.emailVerificationCodeExpires = Date.now() + 3600000; // 1 hour
+        user.updatedAt = Date.now();
+        
+        await user.save();
+        
+        // Send verification email to new email address
+        try {
+            await sendVerificationEmail(user, verificationCode);
+            
+            res.status(200).json({
+                success: true,
+                message: "Email updated. Please verify your new email address.",
+                email: newEmail
+            });
+        } catch (emailError) {
+            console.error("Email verification sending failed:", emailError);
+            res.status(500).json({ 
+                message: "Email updated but verification email failed to send" 
+            });
+        }
+        
+    } catch (err) {
+        console.error("Error in updateEmail:", err);
+        res.status(500).json({ 
+            message: "Failed to update email", 
+            error: err.message 
+        });
+    }
+};
+
+// Get user statistics/analytics
+exports.getUserStats = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        
+        const user = await User.findById(userId);
+        
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        // Mock stats - replace with actual data from your application
+        const stats = {
+            totalTransactions: 247,
+            totalSpent: 125420,
+            averageTransactionValue: 508,
+            accountAge: Math.floor((Date.now() - user.createdAt) / (1000 * 60 * 60 * 24)), // days
+            completedProjects: 32,
+            successRate: 98.5,
+            currentStreak: 45,
+            achievementPoints: 2840,
+            lastLoginAt: user.lastLoginAt,
+            memberSince: user.createdAt
+        };
+        
+        res.status(200).json({
+            success: true,
+            stats
+        });
+        
+    } catch (err) {
+        console.error("Error in getUserStats:", err);
+        res.status(500).json({ 
+            message: "Failed to fetch user statistics", 
+            error: err.message 
+        });
+    }
+};
+
+// Delete user account
+exports.deleteAccount = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { password, confirmDeletion } = req.body;
+        
+        if (!password || confirmDeletion !== 'DELETE') {
+            return res.status(400).json({ 
+                message: "Password and deletion confirmation are required" 
+            });
+        }
+        
+        // Find user with password field
+        const user = await User.findById(userId).select('+password');
+        
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        // Verify password
+        const isPasswordValid = await user.comparePassword(password);
+        
+        if (!isPasswordValid) {
+            return res.status(400).json({ message: "Password is incorrect" });
+        }
+        
+        // Delete user account
+        await User.findByIdAndDelete(userId);
+        
+        // Clean up uploaded files
+        try {
+            if (user.avatar && fs.existsSync(user.avatar)) {
+                fs.unlinkSync(user.avatar);
+            }
+            if (user.companyLogo && fs.existsSync(user.companyLogo)) {
+                fs.unlinkSync(user.companyLogo);
+            }
+            if (user.signature && fs.existsSync(user.signature)) {
+                fs.unlinkSync(user.signature);
+            }
+        } catch (fileError) {
+            console.error("Error cleaning up files:", fileError);
+        }
+        
+        res.status(200).json({
+            success: true,
+            message: "Account deleted successfully"
+        });
+        
+    } catch (err) {
+        console.error("Error in deleteAccount:", err);
+        res.status(500).json({ 
+            message: "Failed to delete account", 
+            error: err.message 
+        });
     }
 };
 
@@ -1039,6 +1444,393 @@ exports.uploadSignature = (req, res) => {
         success: false,
         message: 'Error saving signature information to database',
         error: error.message
+      });
+    }
+  });
+};
+
+// =======================
+// PAYMENT METHODS ENDPOINTS
+// =======================
+
+// Get user payment methods
+exports.getPaymentMethods = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        
+        const user = await User.findById(userId).select('paymentMethods');
+        
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        // Filter out inactive payment methods
+        const activeMethods = user.paymentMethods.filter(method => method.isActive);
+        
+        res.status(200).json({
+            success: true,
+            paymentMethods: activeMethods
+        });
+        
+    } catch (err) {
+        console.error("Error in getPaymentMethods:", err);
+        res.status(500).json({ 
+            message: "Failed to fetch payment methods", 
+            error: err.message 
+        });
+    }
+};
+
+// Add new payment method
+exports.addPaymentMethod = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { cardNumber, expiryDate, cvv, cardHolder, nickname, isDefault } = req.body;
+        console.log(req.body);
+        // Validate required fields
+        if (!cardNumber || !expiryDate || !cvv || !cardHolder) {
+            return res.status(400).json({ 
+                message: "Card number, expiry date, CVV, and cardholder name are required" 
+            });
+        }
+        
+        // Validate card number (basic validation)
+        const cleanCardNumber = cardNumber.replace(/\s/g, '');
+        if (!/^\d{13,19}$/.test(cleanCardNumber)) {
+            return res.status(400).json({ 
+                message: "Invalid card number format" 
+            });
+        }
+        
+        // Validate expiry date
+        const [month, year] = expiryDate.split('/');
+        if (!month || !year || !/^(0[1-9]|1[0-2])$/.test(month) || !/^\d{2}$/.test(year)) {
+            return res.status(400).json({ 
+                message: "Invalid expiry date format (MM/YY)" 
+            });
+        }
+        
+        // Check if card is expired
+        const currentYear = new Date().getFullYear() % 100;
+        const currentMonth = new Date().getMonth() + 1;
+        const expYear = parseInt(year);
+        const expMonth = parseInt(month);
+        
+        if (expYear < currentYear || (expYear === currentYear && expMonth < currentMonth)) {
+            return res.status(400).json({ 
+                message: "Card has expired" 
+            });
+        }
+        
+        // Detect card type
+        const detectCardType = (number) => {
+            const cleaned = number.replace(/\s/g, '');
+            if (/^4/.test(cleaned)) return 'visa';
+            if (/^5[1-5]/.test(cleaned)) return 'mastercard';
+            if (/^3[47]/.test(cleaned)) return 'amex';
+            if (/^6/.test(cleaned)) return 'discover';
+            return 'visa'; // default
+        };
+        
+        const user = await User.findById(userId);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        // Check if this card already exists (by last 4 digits and expiry)
+        const lastFour = cleanCardNumber.slice(-4);
+        const existingCard = user.paymentMethods.find(method => 
+            method.lastFour === lastFour && 
+            method.expiryMonth === month.padStart(2, '0') && 
+            method.expiryYear === `20${year}` &&
+            method.isActive
+        );
+        
+        if (existingCard) {
+            return res.status(400).json({ 
+                message: "This payment method already exists" 
+            });
+        }
+        
+        // If this is the first card or explicitly set as default, make it default
+        const shouldBeDefault = isDefault || user.paymentMethods.filter(m => m.isActive).length === 0;
+        
+        // If setting as default, remove default from other cards
+        if (shouldBeDefault) {
+            user.paymentMethods.forEach(method => {
+                if (method.isActive) method.isDefault = false;
+            });
+        }
+        
+        // Create new payment method
+        const newPaymentMethod = {
+            type: detectCardType(cleanCardNumber),
+            lastFour: lastFour,
+            expiryMonth: month.padStart(2, '0'),
+            expiryYear: `20${year}`,
+            cardHolder: cardHolder.trim().toUpperCase(),
+            isDefault: shouldBeDefault,
+            nickname: nickname || `${detectCardType(cleanCardNumber).toUpperCase()} ending in ${lastFour}`,
+            isActive: true
+        };
+        
+        user.paymentMethods.push(newPaymentMethod);
+        await user.save();
+        
+        // Return the new payment method (without sensitive data)
+        const addedMethod = user.paymentMethods[user.paymentMethods.length - 1];
+        
+        res.status(201).json({
+            success: true,
+            message: "Payment method added successfully",
+            paymentMethod: addedMethod
+        });
+        
+    } catch (err) {
+        console.error("Error in addPaymentMethod:", err);
+        res.status(500).json({ 
+            message: "Failed to add payment method", 
+            error: err.message 
+        });
+    }
+};
+
+// Update payment method
+exports.updatePaymentMethod = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { paymentMethodId } = req.params;
+        const { nickname, isDefault } = req.body;
+        
+        const user = await User.findById(userId);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        const paymentMethod = user.paymentMethods.id(paymentMethodId);
+        if (!paymentMethod || !paymentMethod.isActive) {
+            return res.status(404).json({ message: "Payment method not found" });
+        }
+        
+        // Update nickname if provided
+        if (nickname !== undefined) {
+            paymentMethod.nickname = nickname.trim();
+        }
+        
+        // Update default status if provided
+        if (isDefault === true) {
+            // Remove default from other cards
+            user.paymentMethods.forEach(method => {
+                if (method.isActive && method.id !== paymentMethodId) {
+                    method.isDefault = false;
+                }
+            });
+            paymentMethod.isDefault = true;
+        } else if (isDefault === false) {
+            paymentMethod.isDefault = false;
+        }
+        
+        await user.save();
+        
+        res.status(200).json({
+            success: true,
+            message: "Payment method updated successfully",
+            paymentMethod: paymentMethod
+        });
+        
+    } catch (err) {
+        console.error("Error in updatePaymentMethod:", err);
+        res.status(500).json({ 
+            message: "Failed to update payment method", 
+            error: err.message 
+        });
+    }
+};
+
+// Delete payment method
+exports.deletePaymentMethod = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { paymentMethodId } = req.params;
+        
+        const user = await User.findById(userId);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        const paymentMethod = user.paymentMethods.id(paymentMethodId);
+        if (!paymentMethod || !paymentMethod.isActive) {
+            return res.status(404).json({ message: "Payment method not found" });
+        }
+        
+        // Soft delete - mark as inactive instead of removing
+        paymentMethod.isActive = false;
+        paymentMethod.isDefault = false;
+        
+        // If this was the default card, make another active card default
+        const activeMethods = user.paymentMethods.filter(method => method.isActive);
+        if (activeMethods.length > 0 && !activeMethods.some(method => method.isDefault)) {
+            activeMethods[0].isDefault = true;
+        }
+        
+        await user.save();
+        
+        res.status(200).json({
+            success: true,
+            message: "Payment method deleted successfully"
+        });
+        
+    } catch (err) {
+        console.error("Error in deletePaymentMethod:", err);
+        res.status(500).json({ 
+            message: "Failed to delete payment method", 
+            error: err.message 
+        });
+    }
+};
+
+// Set default payment method
+exports.setDefaultPaymentMethod = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { paymentMethodId } = req.params;
+        
+        const user = await User.findById(userId);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        
+        const paymentMethod = user.paymentMethods.id(paymentMethodId);
+        if (!paymentMethod || !paymentMethod.isActive) {
+            return res.status(404).json({ message: "Payment method not found" });
+        }
+        
+        // Remove default from all cards
+        user.paymentMethods.forEach(method => {
+            method.isDefault = false;
+        });
+        
+        // Set this card as default
+        paymentMethod.isDefault = true;
+        
+        await user.save();
+        
+        res.status(200).json({
+            success: true,
+            message: "Default payment method updated successfully",
+            paymentMethod: paymentMethod
+        });
+        
+    } catch (err) {
+        console.error("Error in setDefaultPaymentMethod:", err);
+        res.status(500).json({ 
+            message: "Failed to set default payment method", 
+            error: err.message 
+        });
+    }
+};
+
+// Upload Avatar Controller
+exports.uploadAvatar = (req, res) => {
+  uploadAvatarMiddleware(req, res, async function(err) {
+    try {
+      // Handle multer errors
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({ 
+            success: false, 
+            message: 'File too large. Maximum size is 5MB.' 
+          });
+        }
+        return res.status(400).json({ 
+          success: false, 
+          message: `Upload error: ${err.message}` 
+        });
+      } 
+      
+      if (err) {
+        return res.status(400).json({ 
+          success: false, 
+          message: err.message || 'An error occurred during upload' 
+        });
+      }
+      
+      // Check if file was uploaded
+      if (!req.file) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Please select an avatar file to upload' 
+        });
+      }
+
+      const userId = req.user._id;
+      
+      // Find the user
+      const user = await User.findById(userId);
+      if (!user) {
+        fs.unlinkSync(req.file.path);
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+      
+      // Delete old avatar if exists
+      if (user.avatar) {
+        const oldAvatarPath = path.join(__dirname, '..', user.avatar);
+        if (fs.existsSync(oldAvatarPath)) {
+          try {
+            fs.unlinkSync(oldAvatarPath);
+            console.log('Old avatar deleted successfully');
+          } catch (deleteError) {
+            console.error('Error deleting old avatar:', deleteError);
+          }
+        }
+      }
+      
+      // Create avatar URL path
+      const avatarPath = `/uploads/avatars/${req.file.filename}`;
+      
+      // Update user's avatar in database
+      const updatedUser = await User.findByIdAndUpdate(
+        userId, 
+        { 
+          avatar: avatarPath,
+          updatedAt: Date.now()
+        },
+        { 
+          new: true,
+          select: '-password -verificationCode -emailVerificationCode -refreshToken'
+        }
+      );
+      
+      console.log(`Avatar uploaded successfully for user ${userId}: ${avatarPath}`);
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Avatar uploaded successfully',
+        data: {
+          avatarUrl: avatarPath,
+          user: updatedUser
+        }
+      });
+      
+    } catch (error) {
+      console.error('Avatar upload error:', error);
+      
+      // Clean up uploaded file if database operation fails
+      if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (cleanupError) {
+          console.error('Error cleaning up file:', cleanupError);
+        }
+      }
+      
+      return res.status(500).json({
+        success: false,
+        message: 'Internal server error while uploading avatar',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   });

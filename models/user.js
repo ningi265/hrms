@@ -31,9 +31,59 @@ const UserSchema = new mongoose.Schema({
     minlength: [8, 'Password must be at least 8 characters'],
     select: false
   },
+  
+  // Contact Information
+  phone: {
+    type: String,
+    trim: true
+  },
+  phoneNumber: {
+    type: String,
+    required: [true, 'Phone number is required'],
+    unique: true,
+    validate: {
+      validator: function(v) {
+        return /^\+?\d{10,15}$/.test(v);
+      },
+      message: props => `${props.value} is not a valid phone number`
+    }
+  },
+  
+  // Address Information
+  address: {
+    type: String,
+    trim: true
+  },
+  city: {
+    type: String,
+    trim: true
+  },
+  state: {
+    type: String,
+    trim: true
+  },
+  zipCode: {
+    type: String,
+    trim: true
+  },
+  country: {
+    type: String,
+    trim: true,
+    default: 'United States'
+  },
+  
+  // Professional Information
+  company: {
+    type: String,
+    trim: true
+  },
   companyName: {
     type: String,
     required: [true, 'Company name is required'],
+    trim: true
+  },
+  jobTitle: {
+    type: String,
     trim: true
   },
   industry: {
@@ -50,18 +100,53 @@ const UserSchema = new mongoose.Schema({
     ],
     default: 'employee'
   },
-  phoneNumber: {
+  
+  // Social/Web Information
+  bio: {
     type: String,
-    required: [true, 'Phone number is required'],
-    unique: true,
+    trim: true,
+    maxlength: [500, 'Bio cannot exceed 500 characters']
+  },
+  website: {
+    type: String,
+    trim: true,
     validate: {
       validator: function(v) {
-        return /^\+?\d{10,15}$/.test(v);
+        if (!v) return true; // Optional field
+        return /^https?:\/\/.+\..+/.test(v);
       },
-      message: props => `${props.value} is not a valid phone number`
+      message: 'Please enter a valid website URL'
     }
   },
+  linkedin: {
+    type: String,
+    trim: true
+  },
+  twitter: {
+    type: String,
+    trim: true
+  },
+  
+  // Profile Media
+  avatar: {
+    type: String,
+    default: null
+  },
+  companyLogo: {
+    type: String,
+    default: null
+  },
+  signature: {
+    type: String,
+    default: null
+  },
+  
+  // Security & Verification
   isVerified: {
+    type: Boolean,
+    default: false
+  },
+  isEmailVerified: {
     type: Boolean,
     default: false
   },
@@ -69,7 +154,7 @@ const UserSchema = new mongoose.Schema({
     type: String,
     default: null
   },
-   emailVerificationCode: {
+  emailVerificationCode: {
     type: String,
     default: null
   },
@@ -81,6 +166,26 @@ const UserSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  
+  // Security Settings
+  twoFactorEnabled: {
+    type: Boolean,
+    default: false
+  },
+  loginNotifications: {
+    type: Boolean,
+    default: true
+  },
+  activityNotifications: {
+    type: Boolean,
+    default: true
+  },
+  
+  // System Fields
+  refreshToken: {
+    type: String,
+    default: null
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -89,18 +194,59 @@ const UserSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
-   refreshToken: {
-    type: String,
-    default: null
-  }, 
-  companyLogo: {
-    type: String,
+  lastLoginAt: {
+    type: Date,
     default: null
   },
-  signature: {
-    type: String,
-    default: null
-  },
+
+  // Payment Methods
+  paymentMethods: [{
+    id: {
+      type: String,
+      default: () => new mongoose.Types.ObjectId().toString()
+    },
+    type: {
+      type: String,
+      enum: ['visa', 'mastercard', 'amex', 'discover'],
+      required: true
+    },
+    lastFour: {
+      type: String,
+      required: true,
+      length: 4
+    },
+    expiryMonth: {
+      type: String,
+      required: true,
+      match: /^(0[1-9]|1[0-2])$/ // 01-12
+    },
+    expiryYear: {
+      type: String,
+      required: true,
+      match: /^\d{4}$/ // YYYY format
+    },
+    cardHolder: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    isDefault: {
+      type: Boolean,
+      default: false
+    },
+    nickname: {
+      type: String,
+      trim: true
+    },
+    isActive: {
+      type: Boolean,
+      default: true
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
 });
 
 // Hash password before saving
@@ -116,6 +262,20 @@ UserSchema.pre('save', async function(next) {
   }
 });
 
+
+UserSchema.pre('save', function(next) {
+  if (this.isModified('paymentMethods')) {
+    const defaultMethods = this.paymentMethods.filter(method => method.isDefault);
+    if (defaultMethods.length > 1) {
+      // Keep only the last one as default
+      this.paymentMethods.forEach((method, index) => {
+        method.isDefault = index === this.paymentMethods.length - 1 && method.isDefault;
+      });
+    }
+  }
+  next();
+});
+
 // Update the updatedAt field before saving
 UserSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
@@ -125,6 +285,16 @@ UserSchema.pre('save', function(next) {
 // Method to compare passwords
 UserSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
+};
+
+// Method to get public profile (excluding sensitive data)
+UserSchema.methods.getPublicProfile = function() {
+  const userObject = this.toObject();
+  delete userObject.password;
+  delete userObject.verificationCode;
+  delete userObject.emailVerificationCode;
+  delete userObject.refreshToken;
+  return userObject;
 };
 
 const migrateUsers = async () => {
