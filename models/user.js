@@ -198,6 +198,11 @@ const UserSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  registrationStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending'
+  },
 
   // Payment Methods
   paymentMethods: [{

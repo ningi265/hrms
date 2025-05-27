@@ -1222,6 +1222,15 @@ exports.getDrivers = async (req, res) => {
     }
 };
 
+exports.getEmployees = async (req, res) => {
+    try {
+        const drivers = await User.find({ role: "Sales/Marketing" }).populate("firstName", "firstName email");
+        res.json(drivers);
+    } catch (err) {
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+};
+
 
 
 // Configure storage for logos

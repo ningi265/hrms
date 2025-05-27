@@ -29,7 +29,8 @@ const {
   updatePaymentMethod,
   deletePaymentMethod,
   setDefaultPaymentMethod,
-  uploadAvatar
+  uploadAvatar,
+  getEmployees
 } = require("../api/controllers/authController");
 const { protect } = require("../api/middleware/authMiddleware");
 
@@ -72,6 +73,20 @@ router.get("/drivers", protect([
   "Other",
   "vendor"
 ]), getDrivers);
+
+router.get("/employees", protect([
+  "procurement_officer", 
+  "admin", 
+  "IT/Technical",
+  "Executive (CEO, CFO, etc.)",
+  "Management",
+  "Sales/Marketing",
+  "Operations",
+  "Human Resources",
+  "Accounting/Finance",
+  "Other",
+  "vendor"
+]), getEmployees);
 
 //Password Reset
 router.post("/reset",requestPasswordReset);

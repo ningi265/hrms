@@ -33,7 +33,11 @@ router.delete("/:id", protect(["admin", "procurement_officer","IT/Technical",
         "Human Resources",
         "Accounting/Finance"]), deleteVendor);
 
-router.post('/register', 
+router.post('/register', protect(["admin", "Vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), 
     vendorController.uploadPowerOfAttorney, 
     vendorController.registerVendor
 );
@@ -112,5 +116,15 @@ router.post('/admin/reject/:vendorId',
         "Human Resources",
         "Accounting/Finance"]), 
     vendorController.rejectVendor
+);
+
+
+router.get('/pending/registration', 
+    protect(["admin", "procurement_officer","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), 
+    vendorController.getPendingRegistrations
 );
 module.exports = router;
