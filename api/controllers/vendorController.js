@@ -269,13 +269,9 @@ exports.approveVendor = async (req, res) => {
 exports.rejectVendor = async (req, res) => {
     try {
         const { vendorId } = req.params;
-        const { reason } = req.body;
         const reviewerId = req.user._id;
 
-        if (!reason) {
-            return res.status(400).json({ message: "Rejection reason is required" });
-        }
-
+       
         const vendor = await Vendor.findById(vendorId);
         if (!vendor) {
             return res.status(404).json({ message: "Vendor not found" });
@@ -285,7 +281,7 @@ exports.rejectVendor = async (req, res) => {
             return res.status(400).json({ message: "Vendor registration is not pending" });
         }
 
-        await vendor.reject(reason, reviewerId);
+        await vendor.reject( reviewerId);
 
         // Here you could send rejection email to vendor
         
@@ -295,7 +291,6 @@ exports.rejectVendor = async (req, res) => {
                 id: vendor._id,
                 businessName: vendor.businessName,
                 status: vendor.registrationStatus,
-                rejectionReason: vendor.rejectionReason
             }
         });
 
@@ -547,6 +542,149 @@ const sendRegistrationEmail = async (vendorData, pdfPath) => {
   }
 };
 
+const sendRegistrationApprovalEmail = async (vendorData, pdfPath) => {
+  try {
+    // Vendor Notification
+    const vendorEmail = vendorData.vendor?.email;
+    if (!vendorEmail) {
+      console.warn('Vendor email missing from vendorData');
+    } else {
+      const vendorMailOptions = {
+        from: process.env.EMAIL_FROM_NAME,
+        to: vendorEmail,
+        subject: 'Your Vendor Registration Has Been Approved',
+       html: `
+  <div style="font-family: Arial, sans-serif; background-color: #f9f9f9; padding: 30px;">
+    <div style="max-width: 600px; margin: auto; background-color: #ffffff; border-radius: 10px; padding: 30px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+      <div style="text-align: center;">
+        <h1 style="color: #4CAF50; margin-bottom: 0;">🎉 Congratulations!</h1>
+        <p style="color: #666; font-size: 16px; margin-top: 5px;">Your vendor registration has been <strong>approved</strong>.</p>
+      </div>
+
+      <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;" />
+
+      <div style="font-size: 16px; color: #333;">
+        <p>Dear ${vendorData.vendor?.firstName || "Vendor"},</p>
+
+        <p>We are pleased to inform you that your vendor application with the following details has been successfully approved:</p>
+
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+          <tr>
+            <td style="padding: 10px; font-weight: bold;">Business Name:</td>
+            <td style="padding: 10px;">${vendorData.businessName}</td>
+          </tr>
+          <tr style="background-color: #f2f2f2;">
+            <td style="padding: 10px; font-weight: bold;">Registration Number:</td>
+            <td style="padding: 10px;">${vendorData.registrationNumber}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px; font-weight: bold;">TIN:</td>
+            <td style="padding: 10px;">${vendorData.taxpayerIdentificationNumber}</td>
+          </tr>
+          <tr style="background-color: #f2f2f2;">
+            <td style="padding: 10px; font-weight: bold;">Approval Date:</td>
+            <td style="padding: 10px;">${new Date().toLocaleString()}</td>
+          </tr>
+        </table>
+
+        <p>You now have full access to vendor services and can begin engaging with procurement opportunities on our platform.</p>
+
+        <p style="margin-top: 30px;">If you have any questions or need further assistance, please contact us at <a href="mailto:support@nyasatech.mw">support@nyasatech.mw</a>.</p>
+
+        <p style="margin-top: 40px;">Warm regards,<br /><strong>The Procurement Team</strong></p>
+      </div>
+
+      <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;" />
+
+      <div style="text-align: center; font-size: 12px; color: #999;">
+        &copy; ${new Date().getFullYear()} Nyasa Supply Chain. All rights reserved.
+      </div>
+    </div>
+  </div>
+`
+      };
+
+      await transporter.sendMail(vendorMailOptions);
+    }
+    return true;
+  } catch (err) {
+    console.error('Error sending email:', err);
+    return false;
+  }
+};
+
+const sendRegistrationRejectionEmail = async (vendorData) => {
+  try {
+    const vendorEmail = vendorData.vendor?.email;
+    if (!vendorEmail) {
+      console.warn('Vendor email missing from vendorData');
+    } else {
+      const rejectionMailOptions = {
+        from: process.env.EMAIL_FROM_NAME,
+        to: vendorEmail,
+        subject: 'Your Vendor Registration Has Been Rejected',
+        html: `
+  <div style="font-family: Arial, sans-serif; background-color: #f9f9f9; padding: 30px;">
+    <div style="max-width: 600px; margin: auto; background-color: #ffffff; border-radius: 10px; padding: 30px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+      <div style="text-align: center;">
+        <h1 style="color: #E53935; margin-bottom: 0;">⚠️ Registration Rejected</h1>
+        <p style="color: #666; font-size: 16px; margin-top: 5px;">Unfortunately, your vendor registration could not be approved.</p>
+      </div>
+
+      <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;" />
+
+      <div style="font-size: 16px; color: #333;">
+        <p>Dear ${vendorData.vendor?.firstName || "Vendor"},</p>
+
+        <p>After reviewing your application, we regret to inform you that it has not been successful. Here are the details:</p>
+
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+          <tr>
+            <td style="padding: 10px; font-weight: bold;">Business Name:</td>
+            <td style="padding: 10px;">${vendorData.businessName}</td>
+          </tr>
+          <tr style="background-color: #f2f2f2;">
+            <td style="padding: 10px; font-weight: bold;">Registration Number:</td>
+            <td style="padding: 10px;">${vendorData.registrationNumber}</td>
+          </tr>
+          <tr>
+            <td style="padding: 10px; font-weight: bold;">TIN:</td>
+            <td style="padding: 10px;">${vendorData.taxpayerIdentificationNumber}</td>
+          </tr>
+          <tr style="background-color: #f2f2f2;">
+            <td style="padding: 10px; font-weight: bold;">Review Date:</td>
+            <td style="padding: 10px;">${new Date().toLocaleString()}</td>
+          </tr>
+        </table>
+
+        <p>You are welcome to reapply in the future after addressing the issues that led to this outcome.</p>
+
+        <p style="margin-top: 30px;">For questions or support, please contact us at <a href="mailto:support@nyasatech.mw">support@nyasatech.mw</a>.</p>
+
+        <p style="margin-top: 40px;">Warm regards,<br /><strong>The Procurement Team</strong></p>
+      </div>
+
+      <hr style="margin: 30px 0; border: none; border-top: 1px solid #eee;" />
+
+      <div style="text-align: center; font-size: 12px; color: #999;">
+        &copy; ${new Date().getFullYear()} Nyasa Supply Chain. All rights reserved.
+      </div>
+    </div>
+  </div>
+`
+      };
+
+      await transporter.sendMail(rejectionMailOptions);
+    }
+    return true;
+  } catch (err) {
+    console.error('Error sending rejection email:', err);
+    return false;
+  }
+};
+
+
+
 // Updated registerVendor function
 exports.registerVendor = async (req, res) => {
   try {
@@ -689,77 +827,117 @@ exports.getPendingRegistrations = async (req, res) => {
 
 // Approve vendor registration (admin only)
 exports.approveVendor = async (req, res) => {
-    try {
-        const { vendorId } = req.params;
-        const reviewerId = req.user._id; // Assuming admin user is authenticated
+  try {
+    const { vendorId } = req.params;
+    const reviewerId = req.user._id;
 
-        const vendor = await Vendor.findById(vendorId);
-        if (!vendor) {
-            return res.status(404).json({ message: "Vendor not found" });
-        }
-
-        if (vendor.registrationStatus !== "pending") {
-            return res.status(400).json({ message: "Vendor registration is not pending" });
-        }
-
-        await vendor.approve(reviewerId);
-
-        // Here you could send approval email to vendor
-        
-        res.json({ 
-            message: "Vendor approved successfully", 
-            vendor: {
-                id: vendor._id,
-                businessName: vendor.businessName,
-                status: vendor.registrationStatus,
-                approvalDate: vendor.approvalDate
-            }
-        });
-
-    } catch (err) {
-        console.error("Error approving vendor:", err);
-        res.status(500).json({ message: "Server error", error: err.message });
+    // Populate to get vendor.vendor (User object with email)
+    const vendor = await Vendor.findById(vendorId).populate("vendor");
+    if (!vendor) {
+      return res.status(404).json({ message: "Vendor not found" });
     }
+
+    if (vendor.registrationStatus !== "pending") {
+      return res.status(400).json({ message: "Vendor registration is not pending" });
+    }
+
+    // Approve the vendor
+    vendor.registrationStatus = "approved";
+    vendor.reviewedBy = reviewerId;
+    vendor.approvalDate = new Date();
+    await vendor.save();
+
+    // Update user's registration status
+    const userId = vendor.vendor?._id;
+    if (!userId) {
+      return res.status(400).json({ message: "Vendor's user reference is missing" });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "Vendor's user not found" });
+    }
+
+    user.registrationStatus = "approved";
+    await user.save();
+
+    // Send approval email to vendor
+    const emailSent = await sendRegistrationApprovalEmail(vendor /*, pdfPath */);
+    if (!emailSent) {
+      console.warn("Email not sent to vendor.");
+    }
+
+    res.json({
+      message: "Vendor approved successfully",
+      vendor: {
+        id: vendor._id,
+        businessName: vendor.businessName,
+        status: vendor.registrationStatus,
+        approvalDate: vendor.approvalDate
+      }
+    });
+  } catch (err) {
+    console.error("Error approving vendor:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
 };
-// Reject vendor registration (admin only)
+
 exports.rejectVendor = async (req, res) => {
-    try {
-        const { vendorId } = req.params;
-        const { reason } = req.body;
-        const reviewerId = req.user._id;
+  try {
+    const { vendorId } = req.params;
+    const reviewerId = req.user._id;
 
-        if (!reason) {
-            return res.status(400).json({ message: "Rejection reason is required" });
-        }
-
-        const vendor = await Vendor.findById(vendorId);
-        if (!vendor) {
-            return res.status(404).json({ message: "Vendor not found" });
-        }
-
-        if (vendor.registrationStatus !== "pending") {
-            return res.status(400).json({ message: "Vendor registration is not pending" });
-        }
-
-        await vendor.reject(reason, reviewerId);
-
-        // Here you could send rejection email to vendor
-        
-        res.json({ 
-            message: "Vendor registration rejected", 
-            vendor: {
-                id: vendor._id,
-                businessName: vendor.businessName,
-                status: vendor.registrationStatus,
-                rejectionReason: vendor.rejectionReason
-            }
-        });
-
-    } catch (err) {
-        console.error("Error rejecting vendor:", err);
-        res.status(500).json({ message: "Server error", error: err.message });
+    // Populate to get vendor.vendor (User object with email)
+    const vendor = await Vendor.findById(vendorId).populate("vendor");
+    if (!vendor) {
+      return res.status(404).json({ message: "Vendor not found" });
     }
+
+    if (vendor.registrationStatus !== "pending") {
+      return res.status(400).json({ message: "Vendor registration is not pending" });
+    }
+
+    // Approve the vendor
+    vendor.registrationStatus = "rejected";
+    vendor.reviewedBy = reviewerId;
+    vendor.approvalDate = new Date();
+    await vendor.save();
+
+    // Update user's registration status
+    const userId = vendor.vendor?._id;
+    if (!userId) {
+      return res.status(400).json({ message: "Vendor's user reference is missing" });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "Vendor's user not found" });
+    }
+
+    user.registrationStatus = "rejected";
+    await user.save();
+
+    // Send approval email to vendor
+    const emailSent = await sendRegistrationRejectionEmail(vendor /*, pdfPath */);
+    if (!emailSent) {
+      console.warn("Email not sent to vendor.");
+    }
+
+    res.json({
+      message: "Vendor rejected successfully",
+      vendor: {
+        id: vendor._id,
+        businessName: vendor.businessName,
+        status: vendor.registrationStatus,
+      }
+    });
+  } catch (err) {
+    console.error("Error rejecting vendor:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
 };
+
+
 // Get vendor details by ID
 exports.getVendorDetails = async (req, res) => {
     try {

@@ -87,6 +87,26 @@ router.delete('/:id', protect(["admin", "procurement_officer","IT/Technical",
         "Human Resources",
         "Accounting/Finance"]), vendorController.deleteVendor);
 
+
+        // POST /api/vendors/admin/approve/:vendorId - Approve vendor registration
+router.post('/approve/:vendorId', 
+   protect(["admin", "procurement_officer","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), 
+    vendorController.approveVendor
+);
+
+// POST /api/vendors/admin/reject/:vendorId - Reject vendor registration
+router.post('/reject/:vendorId', 
+    protect(["admin", "procurement_officer","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), 
+    vendorController.rejectVendor
+);
 // Admin only routes (requires admin role)
 // GET /api/vendors/admin/pending - Get all pending registrations
 router.get('/admin/pending', 
@@ -98,25 +118,7 @@ router.get('/admin/pending',
     vendorController.getPendingRegistrations
 );
 
-// POST /api/vendors/admin/approve/:vendorId - Approve vendor registration
-router.post('/admin/approve/:vendorId', 
-   protect(["admin", "procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance"]), 
-    vendorController.approveVendor
-);
 
-// POST /api/vendors/admin/reject/:vendorId - Reject vendor registration
-router.post('/admin/reject/:vendorId', 
-    protect(["admin", "procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance"]), 
-    vendorController.rejectVendor
-);
 
 
 router.get('/pending/registration', 
