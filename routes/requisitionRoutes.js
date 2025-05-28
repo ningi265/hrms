@@ -24,7 +24,7 @@ router.post("/", protect(["employee","procurement_officer","IT/Technical",
         "Accounting/Finance","Sales/Marketing"]), createRequisition);
 
 // Employee: Get my requisitions
-router.get("/my", protect(["employee"]), getMyRequisitions);
+router.get("/my", protect(["Sales/Marketing"]), getMyRequisitions);
 
 // Procurement/Admin: Get all requisitions
 router.get("/", protect(["procurement_officer", "admin","IT/Technical",
