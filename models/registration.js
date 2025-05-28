@@ -88,13 +88,7 @@ const RegistrationSchema = new mongoose.Schema({
     rejectionReason: { type: String },
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     
-    // Contact Information
-    authorizedContact: {
-        name: { type: String, default: "Brian Mtonga" },
-        phone: { type: String, default: "+265 993773578" },
-        email: { type: String, default: "ndawamtonga68@gmail.com" }
-    },
-    
+   
     // Terms and Conditions
     termsAccepted: { type: Boolean, required: true, default: false },
     termsAcceptedDate: { type: Date }

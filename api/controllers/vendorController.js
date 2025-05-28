@@ -825,6 +825,26 @@ exports.getPendingRegistrations = async (req, res) => {
     }
 }
 
+
+exports.getVendorRegistrationData = async (req, res) => {
+    const vendorId =  req.user._id;  
+
+    try {
+        const registrationData = await Vendor.findOne({ vendor: vendorId })
+            .populate('vendor', 'firstName lastName phoneNumber email');
+
+        if (!registrationData) {
+            return res.status(404).json({ message: "Registration data not found for this vendor." });
+        }
+
+        res.json(registrationData);
+    } catch (err) {
+        console.error("Error fetching vendor registration data:", err);
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+};
+
+
 // Approve vendor registration (admin only)
 exports.approveVendor = async (req, res) => {
   try {

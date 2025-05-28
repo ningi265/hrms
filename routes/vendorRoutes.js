@@ -58,7 +58,11 @@ router.get('/', protect(["admin", "procurement_officer","IT/Technical",
         "Management",
         "Human Resources",
         "Accounting/Finance"]), vendorController.getVendors);
-
+router.get('/vendor-data', protect(["admin", "Vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), vendorController.getVendorRegistrationData );
 // GET /api/vendors/:vendorId - Get specific vendor details
 router.get('/:vendorId', protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
