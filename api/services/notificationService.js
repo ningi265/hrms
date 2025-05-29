@@ -241,11 +241,11 @@ const sendRFQEmailToVendor = async (vendor, rfqData) => {
       html: emailContent.html
     });
 
-    console.log(`RFQ notification sent to ${vendor.name} (${vendor.email})`);
-    return { success: true, vendor: vendor.name };
+    console.log(`RFQ notification sent to ${vendor.firstName} (${vendor.email})`);
+    return { success: true, vendor: vendor.firstName };
 
   } catch (error) {
-    console.error(`Failed to send RFQ notification to ${vendor.name}:`, error);
+    console.error(`Failed to send RFQ notification to ${vendor.firstName}:`, error);
     throw error;
   }
 };
@@ -287,7 +287,7 @@ const createRFQEmailContent = (vendor, rfqData) => {
 
   // Plain text version
   const textContent = `
-Dear ${vendor.name},
+Dear ${vendor.firstName},
 
 ${priorityText}
 
@@ -333,7 +333,7 @@ NEXT STEPS:
 4. Contact us if you have any questions
 
 RFQ ID: ${rfqId}
-Procurement Officer: ${procurementOfficer?.name || 'Not specified'}
+Procurement Officer: ${procurementOfficer?.firstName || 'Not specified'}
 Contact Email: ${procurementOfficer?.email || process.env.EMAIL_USER}
 
 We value your partnership and look forward to receiving your competitive quotation.
@@ -388,7 +388,7 @@ For questions, contact: ${procurementOfficer?.email || process.env.EMAIL_USER}
         </div>
         
         <div class="content">
-            <h2>Dear ${vendor.name},</h2>
+            <h2>Dear ${vendor.firstName},</h2>
             <p>We are pleased to invite you to submit a quotation for the following requirement. Your expertise makes you an ideal partner for this opportunity.</p>
             
             <div class="rfq-details">
@@ -465,7 +465,7 @@ For questions, contact: ${procurementOfficer?.email || process.env.EMAIL_USER}
             <div class="contact-info">
                 <h4>📞 Contact Information</h4>
                 <p><strong>RFQ ID:</strong> ${rfqId}</p>
-                <p><strong>Procurement Officer:</strong> ${procurementOfficer?.name || 'Not specified'}</p>
+                <p><strong>Procurement Officer:</strong> ${procurementOfficer?.firstName || 'Not specified'}</p>
                 <p><strong>Email:</strong> ${procurementOfficer?.email || process.env.EMAIL_USER}</p>
             </div>
             
@@ -494,8 +494,21 @@ For questions, contact: ${procurementOfficer?.email || process.env.EMAIL_USER}
 // Function to be called from your RFQ controller
 const notifyVendorsAboutRFQ = async (vendors, rfqData) => {
   try {
+    
     console.log(`Sending RFQ notifications to ${vendors.length} vendors for: ${rfqData.itemName}`);
     
+    // Validate vendors array
+    if (!vendors || !Array.isArray(vendors) || vendors.length === 0) {
+      throw new Error('Invalid vendors array provided');
+    }
+
+    // Log vendor details for debugging
+    console.log('Vendors to notify:', vendors.map(v => ({
+      id: v._id,
+      name: v.firstName || 'Unknown',
+      email: v.email
+    })));
+
     const results = await sendRFQNotificationToVendors(vendors, rfqData);
     
     console.log(`RFQ Notification Summary:
@@ -503,11 +516,32 @@ const notifyVendorsAboutRFQ = async (vendors, rfqData) => {
       - Successfully notified: ${results.successful}
       - Failed notifications: ${results.failed}
     `);
+
+    // Log failed notifications if any
+    if (results.failed > 0 && results.failedVendors) {
+      console.warn('Failed to notify these vendors:', 
+        results.failedVendors.map(v => ({
+          id: v._id || v.vendorId,
+          email: v.email,
+          error: v.error
+        }))
+      );
+    }
     
     return results;
   } catch (error) {
     console.error('Error in notifyVendorsAboutRFQ:', error);
-    throw error;
+    // Return a results object even in case of error
+    return {
+      total: vendors ? vendors.length : 0,
+      successful: 0,
+      failed: vendors ? vendors.length : 0,
+      failedVendors: vendors ? vendors.map(v => ({
+        vendorId: v._id,
+        email: v.email,
+        error: error.message
+      })) : []
+    };
   }
 };
 

@@ -1,6 +1,7 @@
 const RFQ = require("../../models/RFQ");
 const Vendor = require("../../models/vendor");
 const Requisition = require("../../models/requisition");
+const User = require("../../models/user");
 const { notifyVendorsAboutRFQ, notifySelectedVendor } = require("../services/notificationService");
 const {sendNotifications} = require("../services/notificationService");
 
@@ -47,10 +48,10 @@ exports.createRFQ = async (req, res) => {
     }
 
     // Ensure vendors is an array of valid vendor IDs
-    const validVendors = await Vendor.find({ _id: { $in: vendors } });
-    if (validVendors.length !== vendors.length) {
-      return res.status(400).json({ message: "Invalid vendor IDs provided" });
-    }
+const validVendors = await User.find({ 
+  _id: { $in: vendors },
+  role: 'Vendor' 
+}).select('firstName email phoneNumber companyName');
 
     // Validate requisition if provided
     let requisition = null;
@@ -94,8 +95,8 @@ exports.createRFQ = async (req, res) => {
     }
 
     // Populate vendor details for notification
-    await rfq.populate('vendors', 'fistName email phoneNumber');
-    await rfq.populate('procurementOfficer', 'fistName email phoneNumber');
+    await rfq.populate('vendors', 'firstName email phoneNumber');
+    await rfq.populate('procurementOfficer', 'firstName email phoneNumber');
 
     // Notify vendors about the RFQ (make sure this function exists)
     try {
@@ -111,7 +112,7 @@ exports.createRFQ = async (req, res) => {
     }
 
     // Log the RFQ creation activity
-    console.log(`RFQ created: ${rfq._id} by ${req.user.fistName || req.user._id} for ${itemName}`);
+    console.log(`RFQ created: ${rfq._id} by ${req.user.firstName || req.user._id} for ${itemName}`);
 
     res.status(201).json({ 
       message: "RFQ created successfully and vendors notified", 
@@ -148,26 +149,34 @@ exports.getAllRFQs = async (req, res) => {
 exports.submitQuote = async (req, res) => {
     try {
         const { price, deliveryTime, notes } = req.body;
+        console.log(req.body);
 
-        // Find the RFQ by ID and populate vendors for validation
-        const rfq = await RFQ.findById(req.params.id).populate("vendors");
+        // Find the RFQ by ID (no need to populate vendors since they're embedded)
+        const rfq = await RFQ.findById(req.params.id);
         console.log("RFQ Found:", rfq);
 
         if (!rfq || rfq.status === "closed") {
             return res.status(400).json({ message: "RFQ not found or closed" });
         }
 
-        // Find the vendor based on `req.user.id`
-        const vendorEntry = rfq.vendors.find(vendor => vendor.user.toString() === req.user._id);
+        // Find the vendor based on req.user._id
+        const vendorEntry = rfq.vendors.find(vendor => vendor._id.toString() === req.user._id.toString());
+        
         if (!vendorEntry) {
-            console.log("Vendor ID mismatch:", req.user._id, "not in", rfq.vendors.map(v => v.user.toString()));
+            console.log("Vendor ID mismatch:", req.user._id, "not in", rfq.vendors.map(v => v._id.toString()));
             return res.status(403).json({ message: "You are not invited to submit a quote for this RFQ." });
         }
 
         console.log("Vendor Found:", vendorEntry);
 
-        // Ensure the correct vendor ID is assigned
-        const newQuote = { vendor: vendorEntry._id, price, deliveryTime, notes };
+        // Create new quote using vendor's _id from the vendors array
+        const newQuote = { 
+            vendor: vendorEntry._id, 
+            price, 
+            deliveryTime, 
+            notes 
+        };
+        
         rfq.quotes.push(newQuote);
         await rfq.save();
 
@@ -182,42 +191,42 @@ exports.submitQuote = async (req, res) => {
 
 exports.selectVendor = async (req, res) => {
     try {
-        const { vendorId } = req.body; // Selected vendor's ID from the frontend
-        console.log("Selected Vendor ID:", vendorId);
+        const { vendorId } = req.body;
+        const rfqId = req.params.id;
 
-        const rfq = await RFQ.findById(req.params.id)
-            .populate("quotes.vendor") // Ensure vendors are properly linked
-            .populate("vendors"); // Fetch vendors list for debugging
-
+        // 1. Find the RFQ (no need for population)
+        const rfq = await RFQ.findById(rfqId);
+        
         if (!rfq) return res.status(404).json({ message: "RFQ not found" });
         if (rfq.status === "closed") return res.status(400).json({ message: "RFQ is already closed" });
         if (rfq.quotes.length === 0) return res.status(400).json({ message: "No quotes available" });
 
-        console.log("RFQ Vendors:", rfq.vendors);
-        console.log("RFQ Quotes:", rfq.quotes);
-
-        // Find the selected quote
-        const selectedQuote = rfq.quotes.find((quote) => {
-            if (!quote.vendor) {
-                console.error("Quote has no vendor:", quote._id);
-                return false;
-            }
-            return quote.vendor._id.toString() === vendorId;
-        });
+        // 2. Convert string vendor IDs to comparable format
+        const selectedQuote = rfq.quotes.find(quote => 
+            quote.vendor.toString() === vendorId.toString()
+        );
 
         if (!selectedQuote) {
-            return res.status(400).json({ message: "Invalid vendor selected" });
+            return res.status(400).json({ 
+                message: "Invalid vendor selection",
+                debug: {
+                    providedVendorId: vendorId,
+                    availableQuoteVendors: rfq.quotes.map(q => q.vendor.toString()),
+                    allVendors: rfq.vendors.map(v => v._id.toString())
+                }
+            });
         }
 
-        // Update RFQ status and selected vendor
+        // 3. Update RFQ
         rfq.status = "closed";
-        rfq.selectedVendor = selectedQuote.vendor;
+        rfq.selectedVendor = selectedQuote.vendor; // This is already the string ID
         await rfq.save();
 
-        // Notify the selected vendor
-        await notifySelectedVendor(selectedQuote.vendor._id, rfq);
+        res.json({ 
+            message: "Vendor selected successfully",
+            selectedVendorId: selectedQuote.vendor
+        });
 
-        res.json({ message: `Vendor ${selectedQuote.vendor.name} selected and notified`, bestQuote: selectedQuote });
     } catch (err) {
         console.error("Error selecting vendor:", err);
         res.status(500).json({ message: "Server error", error: err.message });

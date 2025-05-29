@@ -396,7 +396,7 @@ exports.getVendorByUser = async (req, res) => {
 
 exports.getVendors = async (req, res) => {
     try {
-        const vendors = await Vendor.find();
+        const vendors = await User.find({ role: "Vendor" }).populate("firstName", "firstName email");
         res.json(vendors);
     } catch (err) {
         res.status(500).json({ message: "Server error", error: err.message });

@@ -9,7 +9,8 @@ const RFQSchema = new mongoose.Schema({
   },
   vendors: [{ 
     type: mongoose.Schema.Types.ObjectId, 
-    ref: "Vendor" 
+    ref: "User" ,
+    required: true 
   }], // Vendors invited to bid
   itemName: { 
     type: String, 
