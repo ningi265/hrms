@@ -108,7 +108,7 @@ const RFQSchema = new mongoose.Schema({
   // Vendor selection (existing)
   selectedVendor: { 
     type: mongoose.Schema.Types.ObjectId, 
-    ref: "Vendor" 
+    ref: "User" 
   },
   
   // Additional tracking fields

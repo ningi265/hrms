@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const PurchaseOrderSchema = new mongoose.Schema({
     rfq: { type: mongoose.Schema.Types.ObjectId, ref: "RFQ", required: true },
-    vendor: { type: mongoose.Schema.Types.ObjectId, ref: "Vendor", required: true },
+    vendor: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     procurementOfficer: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     items: [{
         itemName: { type: String, required: true },

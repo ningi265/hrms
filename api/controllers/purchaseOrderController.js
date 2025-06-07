@@ -20,7 +20,7 @@ exports.createPO = async (req, res) => {
       // Create the purchase order
       const po = await PurchaseOrder.create({
         rfq: rfq._id,
-        vendor: rfq.selectedVendor,
+        vendor: rfq.selectedVendor._id,
         procurementOfficer: req.user._id,
         items,
         totalAmount,
@@ -30,7 +30,13 @@ exports.createPO = async (req, res) => {
       // Notify the vendor
       await notifyVendorPOCreated(rfq.selectedVendor, po);
   
-      res.status(201).json({ message: "Purchase Order created successfully", po });
+      const populatedPO = await PurchaseOrder.findById(po._id).populate({
+  path: 'vendor',
+  select: 'firstName lastName email'
+});
+
+res.status(201).json({ message: "Purchase Order created successfully", po: populatedPO });
+
     } catch (err) {
       console.error("Error in createPO:", err); // Log the error
       res.status(500).json({ message: "Server error", error: err.message });
@@ -86,7 +92,7 @@ exports.rejectPO = async (req, res) => {
 exports.getAllPOs = async (req, res) => {
     try {
         console.log("Fetching All Purchase Orders"); // Log the action
-        const pos = await PurchaseOrder.find().populate("vendor procurementOfficer approver", "name email");
+        const pos = await PurchaseOrder.find().populate("vendor procurementOfficer approver", "firstName lastName email");
         console.log("All Purchase Orders:", pos); // Log the fetched POs
 
         res.json(pos);
@@ -261,11 +267,11 @@ exports.updateDeliveryStatus = async (req, res) => {
             return res.status(400).json({ message: "Token is required" });
         }
 
-        console.log("🔹 Fetching vendor ID from: https://hrms-6s3i.onrender.com/api/vendors/me");
+        console.log("🔹 Fetching vendor ID from: http://localhost:4000/api/vendors/me");
         console.log("🔹 Using token:", token);
 
         // Step 1: Fetch the vendor ID using the user ID
-        const vendorResponse = await fetch("https://hrms-6s3i.onrender.com/api/vendors/me", {
+        const vendorResponse = await fetch("http://localhost:4000/api/vendors/me", {
             headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${token}`,

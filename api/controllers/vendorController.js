@@ -383,16 +383,7 @@ exports.addVendor = async (req, res) => {
     }
 };
 
-exports.getVendorByUser = async (req, res) => {
-    try {
-        const vendor = await Vendor.findOne({ user: req.user._id });
-        if (!vendor) return res.status(404).json({ message: "Vendor not found" });
 
-        res.json(vendor);
-    } catch (err) {
-        res.status(500).json({ message: "Server error", error: err.message });
-    }
-};
 
 exports.getVendors = async (req, res) => {
     try {
@@ -979,14 +970,20 @@ exports.getVendorDetails = async (req, res) => {
 };  
 // Export multer upload middleware
 exports.uploadPowerOfAttorney = upload.single('powerOfAttorney');
-exports.getVendorByUser = async (req, res) => {
-    try {
-        const vendor = await Vendor.findOne({ user: req.user._id });
-        if (!vendor) return res.status(404).json({ message: "Vendor not found" });
 
-        res.json(vendor);
-    } catch (err) {
-        res.status(500).json({ message: "Server error", error: err.message });
-    }
+
+exports.getVendorByUser = async (req, res) => {
+  try {
+    const vendor = await User.findOne({ _id: req.user._id, role: 'Vendor' });
+
+    if (!vendor) return res.status(404).json({ message: "Vendor not found" });
+
+    res.json(vendor);
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
 };
+
+
+
 

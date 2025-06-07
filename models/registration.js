@@ -87,8 +87,6 @@ const RegistrationSchema = new mongoose.Schema({
     approvalDate: { type: Date },
     rejectionReason: { type: String },
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    
-   
     // Terms and Conditions
     termsAccepted: { type: Boolean, required: true, default: false },
     termsAcceptedDate: { type: Date }

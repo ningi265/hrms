@@ -98,67 +98,67 @@ router.get('/profile', protect(["admin", "procurement_officer","vendor","IT/Tech
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getProfile);
+        "Accounting/Finance","Sales/Marketing","Vendor"]), getProfile);
 router.put('/profile', protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), updateProfile);
+        "Accounting/Finance","Sales/Marketing","Vendor"]), updateProfile);
 router.put('/security', protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), updateSecuritySettings);
+        "Accounting/Finance","Sales/Marketing","Vendor"]), updateSecuritySettings);
 router.put('/change-password', protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), changePassword);
+        "Accounting/Finance","Sales/Marketing","Vendor"]), changePassword);
 router.put('/update-email', protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), updateEmail);
+        "Accounting/Finance","Sales/Marketing","Vendor"]), updateEmail);
 router.get('/stats', protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getUserStats);
+        "Accounting/Finance","Sales/Marketing","Vendor"]), getUserStats);
 router.delete('/account',protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), deleteAccount);
+        "Accounting/Finance","Sales/Marketing","Vendor"]), deleteAccount);
 router.post('/upload-avatar', protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]),uploadAvatar);
+        "Accounting/Finance","Sales/Marketing","Vendor"]),uploadAvatar);
 
 // Payment Methods Routes
 router.get('/payment-methods',protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getPaymentMethods);
+        "Accounting/Finance","Sales/Marketing","Vendor"]), getPaymentMethods);
 router.post('/payment-methods',protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), addPaymentMethod);
+        "Accounting/Finance","Sales/Marketing","Vendor"]), addPaymentMethod);
 router.put('/payment-methods/:paymentMethodId',protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), updatePaymentMethod);
+        "Accounting/Finance","Sales/Marketing","Vendor"]), updatePaymentMethod);
 router.delete('/payment-methods/:paymentMethodId',protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), deletePaymentMethod);
+        "Accounting/Finance","Sales/Marketing","Vendor"]), deletePaymentMethod);
 router.put('/payment-methods/:paymentMethodId/default', protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]),setDefaultPaymentMethod);
+        "Accounting/Finance","Sales/Marketing","Vendor"]),setDefaultPaymentMethod);
 module.exports = router;
