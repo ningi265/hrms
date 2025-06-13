@@ -30,7 +30,8 @@ const {
   deletePaymentMethod,
   setDefaultPaymentMethod,
   uploadAvatar,
-  getEmployees
+  getEmployees,
+  getEmployeeById
 } = require("../api/controllers/authController");
 const { protect } = require("../api/middleware/authMiddleware");
 
@@ -161,4 +162,9 @@ router.put('/payment-methods/:paymentMethodId/default', protect(["admin", "procu
         "Management",
         "Human Resources",
         "Accounting/Finance","Sales/Marketing","Vendor"]),setDefaultPaymentMethod);
+router.get('/employees/:id',protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance","Sales/Marketing","Vendor"]),getEmployeeById );
 module.exports = router;
