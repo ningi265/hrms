@@ -1,4 +1,5 @@
 const User = require("../../models/user");
+const Department = require('../../models/departments');
 const jwt = require("jsonwebtoken");
 const twilio = require('twilio');
 const bcrypt = require('bcryptjs');
@@ -1223,12 +1224,19 @@ exports.getDrivers = async (req, res) => {
 };
 
 exports.getEmployees = async (req, res) => {
-    try {
-        const drivers = await User.find({ role: "Sales/Marketing" }).populate("firstName", "firstName email");
-        res.json(drivers);
-    } catch (err) {
-        res.status(500).json({ message: "Server error", error: err.message });
-    }
+  try {
+    const employees = await User.find({ role: 'Sales/Marketing' })
+      .populate('departmentId', 'name departmentCode')
+      .populate('manager', 'firstName lastName email')
+      .populate('directReports', 'firstName lastName email position')
+      .sort({ createdAt: -1 });
+
+    console.log(`Fetched ${employees.length} employees`);
+    res.status(200).json(employees);
+  } catch (error) {
+    console.error('Error fetching employees:', error);
+    res.status(500).json({ message: 'Server error while fetching employees' });
+  }
 };
 
 // @desc    Get an employee by ID
@@ -1250,6 +1258,160 @@ exports.getEmployeeById = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+// Update employee
+exports.updateEmployee = async (req, res) => {
+  try {
+    const employeeId = req.params.id;
+    const updateData = req.body;
+
+    // Remove fields that shouldn't be updated directly
+    delete updateData.password;
+    delete updateData.role;
+    delete updateData.employeeId;
+    delete updateData._id;
+
+    // Update timestamp
+    updateData.updatedAt = new Date();
+
+    // If salary is being updated, convert to number
+    if (updateData.salary) {
+      updateData.salary = parseFloat(updateData.salary);
+    }
+
+    // If hireDate is being updated, convert to Date
+    if (updateData.hireDate) {
+      updateData.hireDate = new Date(updateData.hireDate);
+    }
+
+    const updatedEmployee = await User.findByIdAndUpdate(
+      employeeId,
+      updateData,
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!updatedEmployee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    console.log(`Updated employee: ${updatedEmployee.firstName} ${updatedEmployee.lastName}`);
+    res.status(200).json({
+      message: 'Employee updated successfully',
+      employee: updatedEmployee
+    });
+  } catch (error) {
+    console.error('Error updating employee:', error);
+    res.status(500).json({ message: 'Server error while updating employee' });
+  }
+};
+
+// Create new employee
+exports.createEmployee = async (req, res) => {
+  try {
+    const {
+      firstName,
+      lastName,
+      email,
+      phoneNumber,
+      address,
+      department,
+      departmentId,
+      position,
+      hireDate,
+      salary,
+      status,
+      emergencyContact,
+      skills,
+      employmentType,
+      workLocation,
+      manager
+    } = req.body;
+
+    // Check if employee with email already exists
+    const existingEmployee = await User.findOne({ email });
+    if (existingEmployee) {
+      return res.status(400).json({ message: 'Employee with this email already exists' });
+    }
+
+    // Check if phone number already exists
+    const existingPhone = await User.findOne({ phoneNumber });
+    if (existingPhone) {
+      return res.status(400).json({ message: 'Employee with this phone number already exists' });
+    }
+
+    // Validate department exists if provided
+    let validDepartmentId = null;
+    if (department) {
+      const departmentDoc = await Department.findOne({ name: department });
+      if (departmentDoc) {
+        validDepartmentId = departmentDoc._id;
+      } else if (departmentId) {
+        const departmentById = await Department.findById(departmentId);
+        if (departmentById) {
+          validDepartmentId = departmentById._id;
+        }
+      }
+    }
+
+    // Generate a temporary password for the employee
+    const tempPassword = `Temp${Math.random().toString(36).slice(-8)}!`;
+
+    const newEmployee = new User({
+      firstName,
+      lastName,
+      email,
+      password: tempPassword, // Will be hashed by pre-save middleware
+      phoneNumber,
+      address,
+      department,
+      departmentId: validDepartmentId,
+      position,
+      hireDate: new Date(hireDate),
+      salary: parseFloat(salary),
+      status: status || 'active',
+      emergencyContact: emergencyContact || {},
+      skills: skills || [],
+      employmentType: employmentType || 'full-time',
+      workLocation: workLocation || 'office',
+      manager: manager || null,
+      role: 'employee',
+      companyName: req.user.companyName || 'Company', // Use the company from the requesting user
+      industry: req.user.industry || 'Technology',
+      registrationStatus: 'approved'
+    });
+
+    const savedEmployee = await newEmployee.save();
+
+    // Update department employee count if department is assigned
+    if (validDepartmentId) {
+      await Department.findByIdAndUpdate(validDepartmentId, {
+        $addToSet: { employees: savedEmployee._id },
+        $inc: { employeeCount: 1 }
+      });
+    }
+
+    // Populate the response
+    const populatedEmployee = await User.findById(savedEmployee._id)
+      .populate('departmentId', 'name departmentCode')
+      .populate('manager', 'firstName lastName email');
+
+    console.log(`Created new employee: ${firstName} ${lastName}`);
+
+    res.status(201).json({
+      message: 'Employee created successfully',
+      employee: populatedEmployee,
+      tempPassword: tempPassword // Include temp password in response (remove in production)
+    });
+  } catch (error) {
+    console.error('Error creating employee:', error);
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({ message: `An employee with this ${field} already exists` });
+    }
+    res.status(500).json({ message: 'Server error while creating employee' });
+  }
+};
+
 
 
 

@@ -34,7 +34,7 @@ const rfqRoutes = require("./routes/rfqRoutes");
 const purchaseOrderRoutes = require('./routes/purchaseOrderRoutes');
 const invoiceRoutes = require("./routes/invoiceRoutes");
 const travelRequestRoutes = require("./routes/travel");
-
+const departmentsRoutes = require("./routes/departmentRoutes");
 
 // Routes
 app.use(express.json());
@@ -48,7 +48,7 @@ app.use("/api/vendors", vendorRoutes);
 app.use("/api/rfqs", rfqRoutes); 
 app.use('/api/purchase-orders', purchaseOrderRoutes); 
 app.use("/api/travel-requests", travelRequestRoutes);
-
+app.use("/api/departments",departmentsRoutes);
 
 
 

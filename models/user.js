@@ -48,6 +48,79 @@ const UserSchema = new mongoose.Schema({
       message: props => `${props.value} is not a valid phone number`
     }
   },
+  emergencyContact: {
+    type: String,
+    trim: true
+  },
+  employeeId: {
+    type: String,
+    unique: true,
+    sparse: true // Allows null values but ensures uniqueness when present
+  },
+  departmentId: {
+    type: String,
+    required: [false, 'Department is required'],
+  },
+   position: {
+    type: String,
+    required: [false, 'Position is required'],
+    trim: true,
+    maxlength: [100, 'Position cannot be more than 100 characters']
+  },
+  hireDate: {
+    type: Date,
+    required: [false, 'Hire date is required']
+  },
+  salary: {
+    type: Number,
+    required: [false, 'Salary is required'],
+    min: [0, 'Salary cannot be negative']
+  },
+  status: {
+    type: String,
+    enum: ['active', 'inactive', 'on-leave', 'terminated'],
+    default: 'active'
+  },
+  manager: {
+    type: String,
+    trim: true
+  },
+  directReports: {
+    type: String,
+    trim: true
+  },
+
+  // Skills and Qualifications
+  skills: [{
+    type: String,
+    trim: true
+  }],
+  qualifications: [{
+    degree: String,
+    institution: String,
+    year: Number,
+    field: String
+  }],
+  certifications: [{
+    name: String,
+    issuingOrganization: String,
+    issueDate: Date,
+    expiryDate: Date,
+    credentialId: String
+  }],
+   taxInformation: {
+    taxId: String,
+    filingStatus: String,
+    allowances: Number
+  },
+  benefits: {
+    healthInsurance: { type: Boolean, default: false },
+    dentalInsurance: { type: Boolean, default: false },
+    visionInsurance: { type: Boolean, default: false },
+    retirement401k: { type: Boolean, default: false },
+    paidTimeOff: { type: Number, default: 0 }
+  },
+
   
   // Address Information
   address: {

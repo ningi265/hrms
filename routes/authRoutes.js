@@ -16,6 +16,7 @@ const {
   uploadSignature,
   requestPasswordReset,
   resetPassword,
+  createEmployee,
 
   getProfile,
   updateProfile,
@@ -88,6 +89,20 @@ router.get("/employees", protect([
   "Other",
   "vendor"
 ]), getEmployees);
+
+router.post("/employees", protect([
+  "procurement_officer", 
+  "admin", 
+  "IT/Technical",
+  "Executive (CEO, CFO, etc.)",
+  "Management",
+  "Sales/Marketing",
+  "Operations",
+  "Human Resources",
+  "Accounting/Finance",
+  "Other",
+  "vendor"
+]), createEmployee);
 
 //Password Reset
 router.post("/reset",requestPasswordReset);
