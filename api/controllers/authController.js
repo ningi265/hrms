@@ -1374,7 +1374,7 @@ exports.createEmployee = async (req, res) => {
       employmentType: employmentType || 'full-time',
       workLocation: workLocation || 'office',
       manager: manager || null,
-      role: 'employee',
+      role: 'Sales/Marketing', // Default role for new employees
       companyName: req.user.companyName || 'Company', // Use the company from the requesting user
       industry: req.user.industry || 'Technology',
       registrationStatus: 'approved'
