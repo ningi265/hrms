@@ -17,6 +17,7 @@ const {
   requestPasswordReset,
   resetPassword,
   createEmployee,
+  verifyRegistration,
 
   getProfile,
   updateProfile,
@@ -32,7 +33,8 @@ const {
   setDefaultPaymentMethod,
   uploadAvatar,
   getEmployees,
-  getEmployeeById
+  getEmployeeById,
+  completeRegistration
 } = require("../api/controllers/authController");
 const { protect } = require("../api/middleware/authMiddleware");
 
@@ -103,6 +105,10 @@ router.post("/employees", protect([
   "Other",
   "vendor"
 ]), createEmployee);
+
+router.post("/complete-registration", completeRegistration);
+
+router.get('/verify-registration/:token',verifyRegistration); 
 
 //Password Reset
 router.post("/reset",requestPasswordReset);

@@ -27,9 +27,19 @@ const UserSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: [true, 'Password is required'],
+    required: [false, 'Password is required'],
     minlength: [8, 'Password must be at least 8 characters'],
     select: false
+  },
+  
+  // *** CRITICAL: Add username field for registration completion ***
+  username: {
+    type: String,
+    unique: true,
+    sparse: true, // Allows null values but enforces uniqueness when present
+    trim: true,
+    minlength: 3,
+    maxlength: 30
   },
   
   // Contact Information
@@ -78,8 +88,8 @@ const UserSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['active', 'inactive', 'on-leave', 'terminated'],
-    default: 'active'
+    enum: ['active', 'inactive', 'on-leave', 'terminated', 'pending'], // Added 'pending'
+    default: 'pending' // Changed default to 'pending' for new employees
   },
   manager: {
     type: String,
@@ -240,6 +250,25 @@ const UserSchema = new mongoose.Schema({
     default: null
   },
   
+  // *** CRITICAL: Employee Registration Fields ***
+  registrationStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected', 'completed', 'expired'], // Updated enum
+    default: 'pending'
+  },
+  registrationToken: {
+    type: String,
+    default: null
+  },
+  registrationTokenExpires: {
+    type: Date,
+    default: null
+  },
+  registrationCompletedAt: {
+    type: Date,
+    default: null
+  },
+  
   // Security Settings
   twoFactorEnabled: {
     type: Boolean,
@@ -270,11 +299,6 @@ const UserSchema = new mongoose.Schema({
   lastLoginAt: {
     type: Date,
     default: null
-  },
-  registrationStatus: {
-    type: String,
-    enum: ['pending', 'approved', 'rejected'],
-    default: 'pending'
   },
 
   // Payment Methods
@@ -327,9 +351,19 @@ const UserSchema = new mongoose.Schema({
   }],
 });
 
+// *** ADD INDEXES FOR REGISTRATION FIELDS ***
+UserSchema.index({ email: 1 });
+UserSchema.index({ registrationToken: 1 });
+UserSchema.index({ registrationTokenExpires: 1 });
+UserSchema.index({ username: 1 });
+UserSchema.index({ departmentId: 1 });
+
 // Hash password before saving
 UserSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
+  
+  // Don't hash if password is undefined (for registration completion)
+  if (!this.password) return next();
   
   try {
     const salt = await bcrypt.genSalt(10);
@@ -339,7 +373,6 @@ UserSchema.pre('save', async function(next) {
     next(err);
   }
 });
-
 
 UserSchema.pre('save', function(next) {
   if (this.isModified('paymentMethods')) {
@@ -362,6 +395,9 @@ UserSchema.pre('save', function(next) {
 
 // Method to compare passwords
 UserSchema.methods.comparePassword = async function(candidatePassword) {
+  if (!this.password) {
+    return false;
+  }
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
@@ -372,7 +408,33 @@ UserSchema.methods.getPublicProfile = function() {
   delete userObject.verificationCode;
   delete userObject.emailVerificationCode;
   delete userObject.refreshToken;
+  delete userObject.registrationToken; // Don't expose registration token
   return userObject;
+};
+
+// *** ADD REGISTRATION HELPER METHODS ***
+
+// Method to check if registration token is valid
+UserSchema.methods.isRegistrationTokenValid = function() {
+  return this.registrationToken && 
+         this.registrationTokenExpires && 
+         this.registrationTokenExpires > Date.now();
+};
+
+// Method to clear registration data
+UserSchema.methods.clearRegistrationData = function() {
+  this.registrationToken = undefined;
+  this.registrationTokenExpires = undefined;
+  this.registrationStatus = 'completed';
+  this.registrationCompletedAt = new Date();
+};
+
+// Static method to find by registration token
+UserSchema.statics.findByRegistrationToken = function(token) {
+  return this.findOne({
+    registrationToken: token,
+    registrationTokenExpires: { $gt: Date.now() }
+  });
 };
 
 const migrateUsers = async () => {

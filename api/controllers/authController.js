@@ -7,6 +7,7 @@ const nodemailer = require('nodemailer');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 //const {sendEmailNotification} = require("../services/notificationService");
 
 // Twilio setup
@@ -131,18 +132,33 @@ const sendPasswordResetEmail = async (user, resetToken) => {
     return transporter.sendMail(mailOptions);
 };
 
-const sendEmailNotification = async (userEmail, subject, message) => {
+const sendEmailNotification = async (userEmail, subject, message, isHtml = true) => {
     try {
-        await transporter.sendMail({
+        const mailOptions = {
             from: `"${process.env.EMAIL_FROM_NAME}" <${process.env.EMAIL_USER}>`,
             to: userEmail,
             subject: subject,
-            text: message,
-            // You could also add html: '<p>HTML version</p>' if needed
-        });
-        console.log(`Email sent to ${userEmail}`); 
+        };
+
+        // Detect if message contains HTML tags
+        const containsHtml = /<[a-z][\s\S]*>/i.test(message);
+        
+        if (isHtml || containsHtml) {
+            // Send as HTML email
+            mailOptions.html = message;
+            
+            // Also provide a plain text version for better compatibility
+            mailOptions.text = message.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+        } else {
+            // Send as plain text
+            mailOptions.text = message;
+        }
+
+        await transporter.sendMail(mailOptions);
+        console.log(`Email sent to ${userEmail} (${isHtml || containsHtml ? 'HTML' : 'Text'} format)`); 
     } catch (error) {
         console.error("Nodemailer email sending error:", error);
+        throw error; // Re-throw so we can handle it in the calling function
     }
 };
 
@@ -1333,12 +1349,6 @@ exports.createEmployee = async (req, res) => {
       return res.status(400).json({ message: 'Employee with this email already exists' });
     }
 
-    // Check if phone number already exists
-    const existingPhone = await User.findOne({ phoneNumber });
-    if (existingPhone) {
-      return res.status(400).json({ message: 'Employee with this phone number already exists' });
-    }
-
     // Validate department exists if provided
     let validDepartmentId = null;
     if (department) {
@@ -1353,14 +1363,21 @@ exports.createEmployee = async (req, res) => {
       }
     }
 
-    // Generate a temporary password for the employee
-    const tempPassword = `Temp${Math.random().toString(36).slice(-8)}!`;
+    // Generate registration token and expiration (48 hours instead of 24)
+    const registrationToken = crypto.randomBytes(32).toString('hex');
+    const registrationTokenExpires = Date.now() + 48 * 60 * 60 * 1000; // 48 hours
+
+    console.log('\n=== CREATING EMPLOYEE ===');
+    console.log('📧 Email:', email);
+    console.log('🔑 Registration Token:', registrationToken);
+    console.log('⏰ Token Expires:', new Date(registrationTokenExpires).toISOString());
+    console.log('⏰ Current Time:', new Date().toISOString());
+    console.log('=========================\n');
 
     const newEmployee = new User({
       firstName,
       lastName,
       email,
-      password: tempPassword, // Will be hashed by pre-save middleware
       phoneNumber,
       address,
       department,
@@ -1368,19 +1385,25 @@ exports.createEmployee = async (req, res) => {
       position,
       hireDate: new Date(hireDate),
       salary: parseFloat(salary),
-      status: status || 'active',
+      status: status || 'pending',
       emergencyContact: emergencyContact || {},
       skills: skills || [],
       employmentType: employmentType || 'full-time',
       workLocation: workLocation || 'office',
       manager: manager || null,
-      role: 'Sales/Marketing', // Default role for new employees
-      companyName: req.user.companyName || 'Company', // Use the company from the requesting user
-      industry: req.user.industry || 'Technology',
-      registrationStatus: 'approved'
+      role: 'Sales/Marketing',
+      companyName: req.user?.companyName || 'Company',
+      industry: req.user?.industry || 'Technology',
+      registrationStatus: 'pending',
+      registrationToken,
+      registrationTokenExpires
     });
 
     const savedEmployee = await newEmployee.save();
+    
+    console.log('✅ Employee saved with ID:', savedEmployee._id);
+    console.log('🔑 Saved token:', savedEmployee.registrationToken);
+    console.log('⏰ Saved expiration:', savedEmployee.registrationTokenExpires);
 
     // Update department employee count if department is assigned
     if (validDepartmentId) {
@@ -1390,17 +1413,52 @@ exports.createEmployee = async (req, res) => {
       });
     }
 
-    // Populate the response
-    const populatedEmployee = await User.findById(savedEmployee._id)
-      .populate('departmentId', 'name departmentCode')
-      .populate('manager', 'firstName lastName email');
+    // Generate registration link
+    const registrationLink = `${process.env.FRONTEND_URL}/complete-registration?token=${registrationToken}&email=${encodeURIComponent(email)}`;
+    
+    console.log('🔗 Registration Link:', registrationLink);
 
-    console.log(`Created new employee: ${firstName} ${lastName}`);
+    // Send registration email
+     const emailSubject = `Complete Your Registration - ${process.env.EMAIL_FROM_NAME || 'Company'}`;
+    const emailMessage = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #333;">Complete Your Registration</h2>
+        <p>Dear ${firstName} ${lastName},</p>
+        <p>Welcome to ${process.env.EMAIL_FROM_NAME || 'our team'}!</p>
+        <p>Your employee account has been created. Please complete your registration by clicking the link below:</p>
+        <div style="margin: 20px 0; text-align: center;">
+          <a href="${registrationLink}" style="display: inline-block; padding: 12px 24px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">Complete Registration</a>
+        </div>
+        <p><strong>Important:</strong> This link will expire in 48 hours for security reasons.</p>
+        <p>If the button doesn't work, copy and paste this link into your browser:</p>
+        <p style="word-break: break-all; background-color: #f5f5f5; padding: 10px; border-radius: 5px;">
+          ${registrationLink}
+        </p>
+        <p>If you didn't expect this email or need assistance, please contact your HR department.</p>
+        <p>Best regards,<br/>${process.env.EMAIL_FROM_NAME || 'Company'} Team</p>
+      </div>
+    `;
+    try {
+      await sendEmailNotification(email, emailSubject, emailMessage);
+      console.log('✅ Registration email sent successfully');
+    } catch (emailError) {
+      console.error('❌ Failed to send registration email:', emailError);
+    }
 
     res.status(201).json({
-      message: 'Employee created successfully',
-      employee: populatedEmployee,
-      tempPassword: tempPassword // Include temp password in response (remove in production)
+      message: 'Employee created successfully. Registration email sent.',
+      employee: {
+        _id: savedEmployee._id,
+        firstName,
+        lastName,
+        email,
+        status: 'pending'
+      },
+      debug: {
+        registrationToken,
+        registrationLink,
+        tokenExpires: new Date(registrationTokenExpires).toISOString()
+      }
     });
   } catch (error) {
     console.error('Error creating employee:', error);
@@ -1412,6 +1470,212 @@ exports.createEmployee = async (req, res) => {
   }
 };
 
+
+
+
+// Verify registration token (new endpoint needed)
+exports.verifyRegistration = async (req, res) => {
+  try {
+    console.log('\n=== VERIFY REGISTRATION DEBUG ===');
+    console.log('🔍 Token from URL:', req.params.token);
+    console.log('⏰ Current time:', new Date().toISOString());
+    
+    const { token } = req.params;
+
+    if (!token) {
+      console.log('❌ No token provided');
+      return res.status(400).json({ 
+        message: 'Registration token is required' 
+      });
+    }
+
+    // First, let's see if ANY user has this token (regardless of expiration)
+    const userWithToken = await User.findOne({ registrationToken: token })
+      .select('registrationToken registrationTokenExpires registrationStatus firstName lastName email');
+    
+    console.log('🔍 User with this token:', userWithToken ? 'FOUND' : 'NOT FOUND');
+    
+    if (userWithToken) {
+      console.log('👤 User details:');
+      console.log('   - Name:', userWithToken.firstName, userWithToken.lastName);
+      console.log('   - Email:', userWithToken.email);
+      console.log('   - Registration Status:', userWithToken.registrationStatus);
+      console.log('   - Token Expires:', userWithToken.registrationTokenExpires);
+      console.log('   - Token Expired?', userWithToken.registrationTokenExpires < Date.now());
+      
+      if (userWithToken.registrationTokenExpires) {
+        const timeLeft = userWithToken.registrationTokenExpires - Date.now();
+        const hoursLeft = Math.round(timeLeft / (1000 * 60 * 60) * 100) / 100;
+        console.log('   - Hours left:', hoursLeft);
+      }
+    }
+
+    // Now check for valid (non-expired) token
+    const user = await User.findOne({
+      registrationToken: token,
+      registrationTokenExpires: { $gt: Date.now() }
+    }).select('-password');
+
+    if (!user) {
+      console.log('❌ No valid user found with unexpired token');
+      
+      // Check if token exists but is expired
+      if (userWithToken && userWithToken.registrationTokenExpires < Date.now()) {
+        console.log('💀 Token found but EXPIRED');
+        return res.status(400).json({ 
+          message: 'This registration link has expired. Please contact HR to resend the registration email.',
+          expired: true,
+          debug: {
+            tokenFound: true,
+            tokenExpired: true,
+            expiredAt: userWithToken.registrationTokenExpires,
+            currentTime: Date.now()
+          }
+        });
+      } else {
+        console.log('🚫 Token not found in database');
+        return res.status(400).json({ 
+          message: 'Invalid registration link. Please contact HR for assistance.',
+          expired: false,
+          debug: {
+            tokenFound: false,
+            searchedToken: token
+          }
+        });
+      }
+    }
+
+    console.log('✅ Valid registration token found!');
+    console.log('================================\n');
+
+    // Return user information for the registration form
+    res.status(200).json({
+      success: true,
+      message: 'Registration token is valid',
+      user: {
+        _id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        position: user.position,
+        companyName: user.companyName || 'Your Company',
+        department: user.department
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error verifying registration token:', error);
+    res.status(500).json({ 
+      message: 'Server error while verifying registration token',
+      error: error.message 
+    });
+  }
+};
+
+
+// Update the existing completeRegistration function to work with the frontend
+exports.completeRegistration = async (req, res) => {
+  try {
+    const { token, username, password } = req.body;
+
+    if (!token || !username || !password) {
+      return res.status(400).json({ 
+        message: 'Token, username, and password are required' 
+      });
+    }
+
+    // Find user by registration token that hasn't expired
+    const user = await User.findOne({
+      registrationToken: token,
+      registrationTokenExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ 
+        message: 'Invalid or expired registration link. Please contact your administrator.' 
+      });
+    }
+
+    // Check if username is already taken
+    const existingUser = await User.findOne({ username });
+    if (existingUser && existingUser._id.toString() !== user._id.toString()) {
+      return res.status(400).json({ message: 'Username already taken' });
+    }
+
+    // Validate password strength
+    if (password.length < 8) {
+      return res.status(400).json({ 
+        message: 'Password must be at least 8 characters long' 
+      });
+    }
+
+    // Password strength validation
+    const hasUppercase = /[A-Z]/.test(password);
+    const hasLowercase = /[a-z]/.test(password);
+    const hasNumbers = /\d/.test(password);
+    const hasSpecialChar = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\?]/.test(password);
+
+    if (!hasUppercase || !hasLowercase || !hasNumbers || !hasSpecialChar) {
+      return res.status(400).json({ 
+        message: 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character' 
+      });
+    }
+
+    // Update user with login credentials
+    user.username = username;
+    user.password = password; // This will be hashed by the pre-save middleware
+    user.registrationStatus = 'completed';
+    user.status = 'active';
+    user.registrationToken = undefined;
+    user.registrationTokenExpires = undefined;
+    user.updatedAt = new Date();
+
+    await user.save();
+
+    // Send welcome email
+    try {
+      const welcomeSubject = `Welcome to ${process.env.EMAIL_FROM_NAME || 'the team'}!`;
+      const welcomeMessage = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2 style="color: #333;">Welcome aboard, ${user.firstName}!</h2>
+          <p>Your account has been successfully set up. Here are your login details:</p>
+          <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <p><strong>Username:</strong> ${username}</p>
+            <p><strong>Email:</strong> ${user.email}</p>
+            <p><strong>Position:</strong> ${user.position}</p>
+          </div>
+          <p>You can now log in to your account and start using the system.</p>
+          <p>If you have any questions, please don't hesitate to contact your supervisor or HR department.</p>
+          <p>Best regards,<br/>The ${process.env.EMAIL_FROM_NAME || 'Company'} Team</p>
+        </div>
+      `;
+
+      await sendEmailNotification(user.email, welcomeSubject, welcomeMessage);
+    } catch (emailError) {
+      console.error('Welcome email failed:', emailError);
+      // Don't fail the registration if email fails
+    }
+
+    res.status(200).json({ 
+      message: 'Registration completed successfully. You can now login with your credentials.',
+      success: true,
+      user: {
+        id: user._id,
+        email: user.email,
+        username: user.username,
+        firstName: user.firstName,
+        lastName: user.lastName
+      }
+    });
+
+  } catch (error) {
+    console.error('Error completing registration:', error);
+    res.status(500).json({ 
+      message: 'Server error while completing registration',
+      error: error.message 
+    });
+  }
+};
 
 
 
