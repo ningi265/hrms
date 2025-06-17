@@ -25,6 +25,8 @@
     "nodemailer": "^6.10.0",
     "pdfkit": "^0.17.1",
     "postmark": "^4.0.5",
+    "socket.io": "^4.8.1",
+    "socketio": "^1.0.0",
     "twilio": "^5.5.2"
   },
   "devDependencies": {

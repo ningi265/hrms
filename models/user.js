@@ -155,6 +155,80 @@ const UserSchema = new mongoose.Schema({
     default: 'United States'
   },
   
+  // Location Information
+  location: {
+    // General location description (e.g., "Blantyre Office", "Lilongwe Branch")
+    name: {
+      type: String,
+      trim: true
+    },
+    // Geographic coordinates for mapping/tracking
+    coordinates: {
+      latitude: {
+        type: Number,
+        min: -90,
+        max: 90,
+        validate: {
+          validator: function(v) {
+            return v === null || v === undefined || (v >= -90 && v <= 90);
+          },
+          message: 'Latitude must be between -90 and 90 degrees'
+        }
+      },
+      longitude: {
+        type: Number,
+        min: -180,
+        max: 180,
+        validate: {
+          validator: function(v) {
+            return v === null || v === undefined || (v >= -180 && v <= 180);
+          },
+          message: 'Longitude must be between -180 and 180 degrees'
+        }
+      }
+    },
+    // Work location/office details
+    office: {
+      type: String,
+      trim: true
+    },
+    // Floor or specific location within building
+    floor: {
+      type: String,
+      trim: true
+    },
+    // Building or facility name
+    building: {
+      type: String,
+      trim: true
+    },
+    // Department/section within office
+    section: {
+      type: String,
+      trim: true
+    },
+    // For tracking last known location (useful for drivers/field workers)
+    lastKnownLocation: {
+      latitude: Number,
+      longitude: Number,
+      timestamp: {
+        type: Date,
+        default: null
+      },
+      accuracy: Number, // GPS accuracy in meters
+      source: {
+        type: String,
+        enum: ['gps', 'network', 'manual', 'check-in'],
+        default: 'manual'
+      }
+    },
+    // Time zone for the location
+    timezone: {
+      type: String,
+      default: 'Africa/Blantyre' // Default for Malawi
+    }
+  },
+  
   // Professional Information
   company: {
     type: String,
@@ -352,11 +426,16 @@ const UserSchema = new mongoose.Schema({
 });
 
 // *** ADD INDEXES FOR REGISTRATION FIELDS ***
-UserSchema.index({ email: 1 });
+// Note: email and username indexes are automatically created by unique: true
 UserSchema.index({ registrationToken: 1 });
 UserSchema.index({ registrationTokenExpires: 1 });
-UserSchema.index({ username: 1 });
 UserSchema.index({ departmentId: 1 });
+
+// *** ADD INDEXES FOR LOCATION FIELDS ***
+UserSchema.index({ 'location.coordinates.latitude': 1, 'location.coordinates.longitude': 1 });
+UserSchema.index({ 'location.name': 1 });
+UserSchema.index({ 'location.office': 1 });
+UserSchema.index({ 'location.lastKnownLocation.timestamp': 1 });
 
 // Hash password before saving
 UserSchema.pre('save', async function(next) {
@@ -434,6 +513,51 @@ UserSchema.statics.findByRegistrationToken = function(token) {
   return this.findOne({
     registrationToken: token,
     registrationTokenExpires: { $gt: Date.now() }
+  });
+};
+
+// *** ADD LOCATION HELPER METHODS ***
+
+// Method to update last known location
+UserSchema.methods.updateLastKnownLocation = function(latitude, longitude, accuracy = null, source = 'manual') {
+  this.location = this.location || {};
+  this.location.lastKnownLocation = {
+    latitude,
+    longitude,
+    timestamp: new Date(),
+    accuracy,
+    source
+  };
+  return this.save();
+};
+
+// Method to get distance between two locations (in kilometers)
+UserSchema.methods.getDistanceFrom = function(latitude, longitude) {
+  if (!this.location?.coordinates?.latitude || !this.location?.coordinates?.longitude) {
+    return null;
+  }
+  
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = (latitude - this.location.coordinates.latitude) * Math.PI / 180;
+  const dLon = (longitude - this.location.coordinates.longitude) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(this.location.coordinates.latitude * Math.PI / 180) * Math.cos(latitude * Math.PI / 180) *
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+};
+
+// Static method to find users near a location
+UserSchema.statics.findNearLocation = function(latitude, longitude, maxDistance = 10) {
+  return this.find({
+    'location.coordinates.latitude': {
+      $gte: latitude - (maxDistance / 111), // Rough conversion: 1 degree ≈ 111km
+      $lte: latitude + (maxDistance / 111)
+    },
+    'location.coordinates.longitude': {
+      $gte: longitude - (maxDistance / (111 * Math.cos(latitude * Math.PI / 180))),
+      $lte: longitude + (maxDistance / (111 * Math.cos(latitude * Math.PI / 180)))
+    }
   });
 };
 
