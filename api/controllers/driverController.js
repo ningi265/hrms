@@ -4,6 +4,7 @@ const Vehicle = require('../../models/vehicles'); // You may need to create this
 
 // Get all real drivers from database
 const getAllDrivers = async (req, res) => {
+    console.log(req.user);
   try {
     const drivers = await User.find({
       role: 'Driver',
@@ -13,6 +14,7 @@ const getAllDrivers = async (req, res) => {
       'location', 'departmentId', 'position', 'createdAt', 'lastLoginAt',
       'email', 'hireDate', 'manager'
     ]).sort({ createdAt: -1 });
+     console.log('Raw drivers from DB:', drivers);
 
     // Transform real driver data for frontend
     const transformedDrivers = await Promise.all(drivers.map(async (driver) => {

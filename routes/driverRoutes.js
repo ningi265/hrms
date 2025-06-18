@@ -5,6 +5,21 @@ const driverController = require('../api/controllers/driverController');
 const { protect } = require("../api/middleware/authMiddleware");
 
 
+const authorizedRoles = [
+  "procurement_officer", 
+  "admin", 
+  "IT/Technical",
+  "Executive (CEO, CFO, etc.)",
+  "Management",
+  "Sales/Marketing",
+  "Operations",
+  "Human Resources",
+  "Accounting/Finance",
+  "Other",
+  "vendor",
+  "Driver"
+];
+
 // Fleet management routes
 router.get('/', protect([
   "procurement_officer", 
@@ -35,6 +50,8 @@ router.get('/statistics', protect([
   "vendor",
     "Driver"
 ]), driverController.getFleetStatistics);
+
+router.get('/locations', protect(authorizedRoles), driverController.getDriverLocations);
 router.get('/:driverId', protect([
   "procurement_officer", 
   "admin", 
@@ -77,6 +94,7 @@ router.patch('/:driverId/status',protect([
   "vendor",
    "Driver"
 ]), driverController.updateDriverStatus);
+
 router.get('/statistics', protect([
   "procurement_officer", 
   "admin", 
