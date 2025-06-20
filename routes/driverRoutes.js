@@ -36,6 +36,23 @@ router.get('/', protect([
    "Driver"
 ]), driverController.getAllDrivers);
 
+router.post('/:id/location', protect([
+  "procurement_officer", 
+  "admin", 
+  "IT/Technical",
+  "Executive (CEO, CFO, etc.)",
+  "Management",
+  "Sales/Marketing",
+  "Operations",
+  "Human Resources",
+  "Accounting/Finance",
+  "Other",
+  "vendor",
+   "Driver"
+]), driverController.driverLoc);
+
+
+
 router.get('/statistics', protect([
   "procurement_officer", 
   "admin", 

@@ -6,8 +6,8 @@ const InvoiceSchema = new mongoose.Schema({
     amountDue: { type: Number, required: true },
     invoiceNumber: { type: String, required: true, unique: true },
     status: { type: String, enum: ["pending", "approved", "rejected", "paid"], default: "pending" },
-    approver: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // Who approved/rejected
-    paymentDate: { type: Date }, // When payment was processed
+    approver: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, 
+    paymentDate: { type: Date }, 
     createdAt: { type: Date, default: Date.now },
 }, { timestamps: true });
 

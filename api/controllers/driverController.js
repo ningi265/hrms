@@ -4,7 +4,7 @@ const Vehicle = require('../../models/vehicles'); // You may need to create this
 
 // Get all real drivers from database
 const getAllDrivers = async (req, res) => {
-    console.log(req.user);
+  console.log(req.user);
   try {
     const drivers = await User.find({
       role: 'Driver',
@@ -14,7 +14,7 @@ const getAllDrivers = async (req, res) => {
       'location', 'departmentId', 'position', 'createdAt', 'lastLoginAt',
       'email', 'hireDate', 'manager'
     ]).sort({ createdAt: -1 });
-     console.log('Raw drivers from DB:', drivers);
+    console.log('Raw drivers from DB:', drivers);
 
     // Transform real driver data for frontend
     const transformedDrivers = await Promise.all(drivers.map(async (driver) => {
@@ -22,15 +22,18 @@ const getAllDrivers = async (req, res) => {
       const coordinates = driver.location?.coordinates || {};
       const lastKnownLocation = driver.location?.lastKnownLocation || {};
       
+      // Return null for location if not available
+      const locationAvailable = coordinates.latitude || lastKnownLocation.latitude;
+      
       return {
         id: driver._id,
         name: `${driver.firstName} ${driver.lastName}`,
-        // Use real coordinates from database or default to Malawi center if not set
-        lat: coordinates.latitude || lastKnownLocation.latitude || -13.2543,
-        lng: coordinates.longitude || lastKnownLocation.longitude || 34.3015,
+        // Only include location if available
+        lat: locationAvailable ? (coordinates.latitude || lastKnownLocation.latitude) : null,
+        lng: locationAvailable ? (coordinates.longitude || lastKnownLocation.longitude) : null,
         status: getDriverStatus(driver),
         vehicle: await getDriverVehicle(driver.employeeId),
-        empId: driver.employeeId,
+        empId: driver._id,
         phone: driver.phoneNumber,
         email: driver.email,
         department: await getDepartmentName(driver.departmentId),
@@ -46,8 +49,8 @@ const getAllDrivers = async (req, res) => {
         lastLoginAt: driver.lastLoginAt,
         // Additional real-time status
         hasGPSEnabled: !!lastKnownLocation.latitude,
-        batteryLevel: null, // Can be updated when driver sends battery info
-        speed: null // Can be calculated from location history
+        batteryLevel: null,
+        speed: null
       };
     }));
 
@@ -62,6 +65,59 @@ const getAllDrivers = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch drivers',
+      error: error.message
+    });
+  }
+};
+
+// Add this to your backend routes
+const driverLoc = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { lat, lng, accuracy, source } = req.body;
+    
+    const driver = await User.findById(id);
+    if (!driver) {
+      return res.status(404).json({ success: false, message: 'Driver not found' });
+    }
+
+    // Update driver location
+    driver.location = {
+      coordinates: { latitude: lat, longitude: lng },
+      lastKnownLocation: {
+        latitude: lat,
+        longitude: lng,
+        accuracy: accuracy || null,
+        source: source || 'gps',
+        timestamp: new Date()
+      }
+    };
+
+    await driver.save();
+
+    // Emit real-time update using req.io instead of io
+    req.io.emit('driver-location-update', {
+      driverId: driver.employeeId,
+      location: { latitude: lat, longitude: lng },
+      accuracy,
+      source: source || 'gps',
+      timestamp: new Date()
+    });
+
+    res.json({
+      success: true,
+      message: 'Location updated successfully',
+      data: {
+        lat,
+        lng,
+        updatedAt: new Date()
+      }
+    });
+  } catch (error) {
+    console.error('Error updating driver location:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update location',
       error: error.message
     });
   }
@@ -437,7 +493,7 @@ function getDriverStatus(driver) {
   }
   
   if (driver.status === 'pending') {
-    return 'maintenance';
+    return 'available';
   }
 
   if (!isDriverOnline(driver.lastLoginAt)) {
@@ -610,4 +666,5 @@ module.exports = {
   getRecentAssignments, 
   createAssignment,
   updateAssignment,
+  driverLoc
 };

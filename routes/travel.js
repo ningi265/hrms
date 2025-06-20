@@ -12,6 +12,12 @@ router.post( '/', protect(["employee","procurement_officer","IT/Technical",
         "Human Resources",
         "Accounting/Finance","Sales/Marketing"]), travelController.travelRequest);
 
+router.get('/employee/processed',protect(["employee","procurement_officer","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance","Sales/Marketing"]), travelController.getEmployeeProcessedRequests);
+
 // Approval Routes
 router.put( '/:id/supervisor-approval', protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
@@ -68,7 +74,7 @@ router.get('/finance/processed', protect(["admin","employee","procurement_office
         "Human Resources",
         "Accounting/Finance","Sales/Marketing"]), travelController.getFinanceProcessedRequestsUser);
 router.get('/employee/:employeeId/reconcile-pending', protect, travelController.getReconcilePendingRequests);
-router.get('/employee/processed', protect, travelController.getEmployeeProcessedRequests);
+
 router.put( '/:id/expenses', protect(["employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
