@@ -78,7 +78,7 @@ exports.createDepartment = async (req, res) => {
     // Try to find the employee who will be the department head
     let headEmployeeId = null;
     if (headEmail) {
-      const headEmployee = await User.findOne({ email: headEmail, role: 'employee' });
+      const headEmployee = await User.findOne({ email: headEmail, role: 'Sales/Marketing' });
       if (headEmployee) {
         headEmployeeId = headEmployee._id;
       }

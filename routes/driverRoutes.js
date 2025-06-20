@@ -169,4 +169,10 @@ router.patch('/assignments/:assignmentId', protect([
   "Driver"
 ]), driverController.updateAssignment);
 
+router.post('/:driverId/fetch-live-location', driverController.fetchLiveLocation);
+
+// Fetch live locations for all active drivers
+// This endpoint fetches current GPS locations for all active drivers
+router.post('/fetch-all-live-locations', driverController.fetchAllLiveLocations);
+
 module.exports = router;
