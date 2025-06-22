@@ -12,6 +12,25 @@ router.post( '/', protect(["employee","procurement_officer","IT/Technical",
         "Human Resources",
         "Accounting/Finance","Sales/Marketing"]), travelController.travelRequest);
 
+router.get("/analytics", protect(["admin","procurement_officer","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), travelController.getTravelExpenseAnalytics);
+// Detailed breakdown endpoint
+router.get("/breakdown", protect(["admin","procurement_officer","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), travelController.getTravelExpenseBreakdown);
+
+// Export endpoint for CSV/JSON data
+router.get("/export", protect(["admin","procurement_officer","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance"]), travelController.exportTravelExpenseData);
+
 router.get('/employee/processed',protect(["employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
@@ -172,5 +191,8 @@ router.get('/dashboard/stats', protect, travelController.getDashboardStats);
 router.get('/dashboard/quick-links', protect, travelController.getDashboardQuickLinks);
 router.get('/upcoming', protect, travelController.getUpcomingTrips);
 router.get('/recent', protect, travelController.getRecentRequests);
+
+
+
 
 module.exports = router;

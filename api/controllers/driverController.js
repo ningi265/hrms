@@ -61,7 +61,7 @@ const getAllDrivers = async (req, res) => {
         // Additional real-time status
         hasGPSEnabled: !!lastKnownLocation.latitude,
         batteryLevel: null,
-        speed: null
+        speed: null,
         hasGPSEnabled: !!(lastKnownLocation.latitude && lastKnownLocation.longitude),
         batteryLevel: lastKnownLocation.batteryLevel || null,
         speed: lastKnownLocation.speed || null,
@@ -289,8 +289,7 @@ const fetchAllLiveLocations = async (req, res) => {
     });
   }
 };
-
-// Update driver location with enhanced data
+{/*// Update driver location with enhanced data
 const updateDriverLocation = async (req, res) => {
   try {
     const { driverId } = req.params;
@@ -522,7 +521,7 @@ const getFleetStatistics = async (req, res) => {
       error: error.message
     });
   }
-};
+};*/}
 
 // Helper functions
 

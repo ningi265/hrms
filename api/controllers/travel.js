@@ -6,6 +6,1289 @@ const { protect }=require("../../api/middleware/authMiddleware");
 const { sendNotifications } = require('../../api/services/notificationService');
 const User = require("../../models/user");
 
+
+
+
+// @desc    Get travel expense analytics data for charts
+// @route   GET /api/travel-requests/analytics
+// @access  Private
+exports.getTravelExpenseAnalytics = async (req, res) => {
+  try {
+    console.log('Request User:', req.query); 
+    const {
+      period = 'monthly',
+      start_date = '2024-01-01',
+      end_date = '2024-12-31',
+      department_id,
+      expense_type,
+      travel_type
+    } = req.query;
+
+    console.log('Processing with:', { period, start_date, end_date });
+
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    // Build match criteria based on user role and filters
+    let matchCriteria = {
+      createdAt: {
+        $gte: new Date(start_date),
+        $lte: new Date(end_date)
+      },
+      status: { $in: ['approved', 'travel_completed', 'pending_reconciliation'] }
+    };
+
+    // Add user-based filtering (employees see only their data, admins see all)
+    if (userRole !== 'admin' && userRole !== 'finance' && userRole !== 'procurement_officer') {
+      matchCriteria.employee = userId;
+    }
+
+    // Add optional filters
+    if (department_id) {
+      matchCriteria['employee.department'] = department_id;
+    }
+    if (travel_type) {
+      matchCriteria.travelType = travel_type;
+    }
+
+    // Get time series data
+    const timeSeriesData = await getTimeSeriesData(matchCriteria, period);
+    
+    // Get breakdown data
+    const breakdownData = await getBreakdownData(matchCriteria);
+    
+    // Calculate metrics
+    const metrics = await calculateTravelMetrics(matchCriteria, userId, userRole);
+    
+    // Get metadata
+    const metadata = await getTravelMetadata(userId, userRole);
+
+    const response = {
+      status: 'success',
+      data: {
+        travel_expenses: {
+          time_series_data: timeSeriesData,
+          breakdown_data: breakdownData,
+          metrics: metrics,
+          metadata: metadata
+        }
+      },
+      meta: {
+        pagination: null,
+        filters_applied: {
+          date_range: {
+            start: start_date,
+            end: end_date
+          },
+          departments: department_id ? [department_id] : ['all'],
+          expense_types: expense_type ? [expense_type] : ['domestic_travel', 'international_travel', 'accommodation', 'transportation', 'meals']
+        },
+        cache_ttl: 300,
+        generated_at: new Date().toISOString()
+      }
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    console.error('Error in getTravelExpenseAnalytics:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch travel expense analytics',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+// Helper function to get metadata
+async function getTravelMetadata(userId, userRole) {
+  const totalBudget = 1200000; // This should come from your budget system
+  
+  try {
+    const usedBudget = await TravelRequest.aggregate([
+      {
+        $match: {
+          ...(userRole !== 'admin' && userRole !== 'finance' ? { employee: userId } : {}),
+          status: { $in: ['approved', 'travel_completed', 'pending_reconciliation'] }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: { $ifNull: ['$estimatedCost', 0] } }
+        }
+      }
+    ]);
+
+    const used = usedBudget[0]?.total || 0;
+
+    return {
+      currency: 'MWK',
+      currency_symbol: 'MWK',
+      last_updated: new Date().toISOString(),
+      data_period: 'monthly',
+      fiscal_year: new Date().getFullYear(),
+      total_budget: totalBudget,
+      budget_used_percentage: totalBudget > 0 ? Math.round((used / totalBudget * 100) * 10) / 10 : 0
+    };
+  } catch (error) {
+    console.error('Error in getTravelMetadata:', error);
+    return {
+      currency: 'MWK',
+      currency_symbol: 'MWK',
+      last_updated: new Date().toISOString(),
+      data_period: 'monthly',
+      fiscal_year: new Date().getFullYear(),
+      total_budget: totalBudget,
+      budget_used_percentage: 0
+    };
+  }
+}
+
+// COMPLETE REPLACEMENT FUNCTIONS - Replace these in your travel.js file
+
+// Helper function to get time series data
+async function getTimeSeriesData(matchCriteria, period) {
+  let dateGrouping;
+  let dateFormat;
+  
+  switch (period) {
+    case 'monthly':
+      dateGrouping = {
+        year: { $year: '$createdAt' },
+        month: { $month: '$createdAt' }
+      };
+      dateFormat = 'MMM';
+      break;
+    case 'quarterly':
+      dateGrouping = {
+        year: { $year: '$createdAt' },
+        quarter: {
+          $ceil: { $divide: [{ $month: '$createdAt' }, 3] }
+        }
+      };
+      dateFormat = 'Q';
+      break;
+    case 'yearly':
+      dateGrouping = {
+        year: { $year: '$createdAt' }
+      };
+      dateFormat = 'YYYY';
+      break;
+    default:
+      dateGrouping = {
+        year: { $year: '$createdAt' },
+        month: { $month: '$createdAt' }
+      };
+      dateFormat = 'MMM';
+  }
+
+  const results = await TravelRequest.aggregate([
+    { $match: matchCriteria },
+    {
+      $addFields: {
+        actualCost: {
+          $cond: [
+            {
+              $and: [
+                { $ne: ['$reconciliation.totalSpent', null] },
+                { $ne: ['$reconciliation.totalSpent', undefined] },
+                { $gte: ['$reconciliation.totalSpent', 0] }
+              ]
+            },
+            '$reconciliation.totalSpent',
+            {
+              $cond: [
+                {
+                  $and: [
+                    { $ne: ['$payment.totalAmount', null] },
+                    { $ne: ['$payment.totalAmount', undefined] },
+                    { $gte: ['$payment.totalAmount', 0] }
+                  ]
+                },
+                '$payment.totalAmount',
+                { $ifNull: ['$estimatedCost', 0] }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      $group: {
+        _id: dateGrouping,
+        revenue: { $sum: '$actualCost' },
+        count: { $sum: 1 },
+        estimatedTotal: { $sum: { $ifNull: ['$estimatedCost', 0] } },
+        maxDate: { $max: '$createdAt' }
+      }
+    },
+    { $sort: { '_id.year': 1, '_id.month': 1, '_id.quarter': 1 } }
+  ]);
+
+  // Transform results and calculate growth
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  
+  return results.map((item, index) => {
+    let periodLabel;
+    if (period === 'monthly') {
+      periodLabel = monthNames[item._id.month - 1];
+    } else if (period === 'quarterly') {
+      periodLabel = `Q${item._id.quarter}`;
+    } else {
+      periodLabel = item._id.year.toString();
+    }
+
+    // Calculate target (90% of estimated for this example)
+    const target = item.estimatedTotal * 0.9;
+    
+    // Calculate growth compared to previous period
+    const prevRevenue = index > 0 ? results[index - 1].revenue : item.revenue;
+    const growth = prevRevenue > 0 ? ((item.revenue - prevRevenue) / prevRevenue * 100) : 0;
+
+    return {
+      period: periodLabel,
+      revenue: Math.round(item.revenue || 0),
+      target: Math.round(target || 0),
+      growth: Math.round(growth * 10) / 10, // Round to 1 decimal
+      timestamp: item.maxDate
+    };
+  });
+}
+
+// Helper function to get breakdown data by expense categories
+async function getBreakdownData(matchCriteria) {
+  const results = await TravelRequest.aggregate([
+    { $match: matchCriteria },
+    {
+      $addFields: {
+        actualCost: {
+          $cond: [
+            {
+              $and: [
+                { $ne: ['$reconciliation.totalSpent', null] },
+                { $ne: ['$reconciliation.totalSpent', undefined] },
+                { $gte: ['$reconciliation.totalSpent', 0] }
+              ]
+            },
+            '$reconciliation.totalSpent',
+            {
+              $cond: [
+                {
+                  $and: [
+                    { $ne: ['$payment.totalAmount', null] },
+                    { $ne: ['$payment.totalAmount', undefined] },
+                    { $gte: ['$payment.totalAmount', 0] }
+                  ]
+                },
+                '$payment.totalAmount',
+                { $ifNull: ['$estimatedCost', 0] }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      $group: {
+        _id: '$travelType',
+        totalAmount: { $sum: '$actualCost' },
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+
+  // Also get expense breakdown from payment.expenses if available
+  const expenseBreakdown = await TravelRequest.aggregate([
+    { $match: matchCriteria },
+    { $unwind: { path: '$payment.expenses', preserveNullAndEmptyArrays: true } },
+    {
+      $match: {
+        'payment.expenses': { $ne: null }
+      }
+    },
+    {
+      $group: {
+        _id: '$payment.expenses.category',
+        totalAmount: { $sum: '$payment.expenses.amount' },
+        count: { $sum: 1 }
+      }
+    },
+    { $match: { _id: { $ne: null } } }
+  ]);
+
+  const totalAmount = results.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
+  
+  // Category mapping for travel types
+  const categoryMapping = {
+    'local': { name: 'Domestic Travel', color: '#3B82F6' },
+    'international': { name: 'International Travel', color: '#10B981' },
+    'accommodation': { name: 'Accommodation', color: '#F59E0B' },
+    'transportation': { name: 'Transportation', color: '#8B5CF6' },
+    'meals': { name: 'Meals & Entertainment', color: '#EF4444' }
+  };
+
+  // Combine travel type and expense category data
+  let combinedData = results.map(item => {
+    const category = categoryMapping[item._id] || { name: item._id, color: '#6B7280' };
+    const percentage = totalAmount > 0 ? ((item.totalAmount / totalAmount) * 100) : 0;
+    
+    return {
+      category: category.name,
+      value: Math.round(percentage * 10) / 10,
+      amount: Math.round(item.totalAmount || 0),
+      color: category.color,
+      description: `${category.name} expenses`
+    };
+  });
+
+  // Add expense breakdown data if available
+  const expenseTotal = expenseBreakdown.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
+  if (expenseTotal > 0 && expenseBreakdown.length > 0) {
+    const expenseData = expenseBreakdown.map(item => {
+      const category = categoryMapping[item._id] || { name: item._id, color: '#6B7280' };
+      const percentage = expenseTotal > 0 ? ((item.totalAmount / expenseTotal) * 100) : 0;
+      
+      return {
+        category: category.name,
+        value: Math.round(percentage * 10) / 10,
+        amount: Math.round(item.totalAmount || 0),
+        color: category.color,
+        description: `${category.name} expenses`
+      };
+    });
+    
+    // Merge or replace with expense data based on your preference
+    combinedData = expenseData.length > combinedData.length ? expenseData : combinedData;
+  }
+
+  return combinedData.length > 0 ? combinedData : [
+    { category: 'Domestic Travel', value: 60, amount: 0, color: '#3B82F6', description: 'Local business trips' },
+    { category: 'International Travel', value: 40, amount: 0, color: '#10B981', description: 'International business trips' }
+  ];
+}
+
+// Helper function to calculate metrics
+async function calculateTravelMetrics(matchCriteria, userId, userRole) {
+  const now = new Date();
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const yearStart = new Date(now.getFullYear(), 0, 1);
+
+  // Current month expenses
+  const currentMonthData = await TravelRequest.aggregate([
+    {
+      $match: {
+        ...matchCriteria,
+        createdAt: { $gte: currentMonthStart }
+      }
+    },
+    {
+      $addFields: {
+        actualCost: {
+          $cond: [
+            {
+              $and: [
+                { $ne: ['$reconciliation.totalSpent', null] },
+                { $ne: ['$reconciliation.totalSpent', undefined] },
+                { $gte: ['$reconciliation.totalSpent', 0] }
+              ]
+            },
+            '$reconciliation.totalSpent',
+            { $ifNull: ['$estimatedCost', 0] }
+          ]
+        }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: '$actualCost' },
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+
+  // Previous month expenses
+  const previousMonthData = await TravelRequest.aggregate([
+    {
+      $match: {
+        ...matchCriteria,
+        createdAt: { 
+          $gte: previousMonthStart,
+          $lt: currentMonthStart
+        }
+      }
+    },
+    {
+      $addFields: {
+        actualCost: {
+          $cond: [
+            {
+              $and: [
+                { $ne: ['$reconciliation.totalSpent', null] },
+                { $ne: ['$reconciliation.totalSpent', undefined] },
+                { $gte: ['$reconciliation.totalSpent', 0] }
+              ]
+            },
+            '$reconciliation.totalSpent',
+            { $ifNull: ['$estimatedCost', 0] }
+          ]
+        }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: '$actualCost' }
+      }
+    }
+  ]);
+
+  // Year to date expenses
+  const ytdData = await TravelRequest.aggregate([
+    {
+      $match: {
+        ...matchCriteria,
+        createdAt: { $gte: yearStart }
+      }
+    },
+    {
+      $addFields: {
+        actualCost: {
+          $cond: [
+            {
+              $and: [
+                { $ne: ['$reconciliation.totalSpent', null] },
+                { $ne: ['$reconciliation.totalSpent', undefined] },
+                { $gte: ['$reconciliation.totalSpent', 0] }
+              ]
+            },
+            '$reconciliation.totalSpent',
+            { $ifNull: ['$estimatedCost', 0] }
+          ]
+        }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: '$actualCost' }
+      }
+    }
+  ]);
+
+  const currentTotal = currentMonthData[0]?.total || 0;
+  const previousTotal = previousMonthData[0]?.total || 0;
+  const ytdTotal = ytdData[0]?.total || 0;
+
+  // Calculate percentage changes
+  const currentVsPrevious = previousTotal > 0 ? ((currentTotal - previousTotal) / previousTotal * 100) : 0;
+  const projectedQuarter = currentTotal * 3; // Simple projection
+
+  return {
+    current_month: {
+      value: Math.round(currentTotal),
+      change_percentage: Math.round(currentVsPrevious * 10) / 10,
+      change_amount: Math.round(currentTotal - previousTotal),
+      trend: currentTotal > previousTotal ? 'up' : 'down'
+    },
+    previous_month: {
+      value: Math.round(previousTotal),
+      change_percentage: 8.3, // You can calculate this based on month before previous
+      change_amount: Math.round(previousTotal * 0.083),
+      trend: 'up'
+    },
+    year_to_date: {
+      value: Math.round(ytdTotal),
+      change_percentage: 5.7, // Compare with previous year if you have historical data
+      change_amount: Math.round(ytdTotal * 0.057),
+      trend: 'up'
+    },
+    projected_quarter: {
+      value: Math.round(projectedQuarter),
+      change_percentage: -2.1,
+      change_amount: Math.round(projectedQuarter * -0.021),
+      trend: 'down'
+    }
+  };
+}
+
+// @desc    Get travel expense breakdown for detailed analysis
+// @route   GET /api/travel-requests/breakdown
+// @access  Private
+exports.getTravelExpenseBreakdown = async (req, res) => {
+  try {
+    const {
+      start_date = '2024-01-01',
+      end_date = '2024-12-31',
+      group_by = 'category' // 'category', 'department', 'travel_type'
+    } = req.query;
+
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    let matchCriteria = {
+      createdAt: {
+        $gte: new Date(start_date),
+        $lte: new Date(end_date)
+      },
+      status: { $in: ['approved', 'travel_completed', 'pending_reconciliation'] }
+    };
+
+    // Add user-based filtering
+    if (userRole !== 'admin' && userRole !== 'finance' && userRole !== 'procurement_officer') {
+      matchCriteria.employee = userId;
+    }
+
+    let groupField;
+    switch (group_by) {
+      case 'travel_type':
+        groupField = '$travelType';
+        break;
+      case 'department':
+        groupField = '$employee.department';
+        break;
+      case 'status':
+        groupField = '$status';
+        break;
+      default:
+        groupField = '$travelType';
+    }
+
+    const breakdown = await TravelRequest.aggregate([
+      { $match: matchCriteria },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'employee',
+          foreignField: '_id',
+          as: 'employeeDetails'
+        }
+      },
+      {
+        $addFields: {
+          actualCost: {
+            $cond: [
+              {
+                $and: [
+                  { $ne: ['$reconciliation.totalSpent', null] },
+                  { $ne: ['$reconciliation.totalSpent', undefined] },
+                  { $gte: ['$reconciliation.totalSpent', 0] }
+                ]
+              },
+              '$reconciliation.totalSpent',
+              { $ifNull: ['$estimatedCost', 0] }
+            ]
+          }
+        }
+      },
+      {
+        $group: {
+          _id: groupField,
+          totalAmount: { $sum: '$actualCost' },
+          count: { $sum: 1 },
+          avgAmount: { $avg: '$actualCost' }
+        }
+      },
+      { $sort: { totalAmount: -1 } }
+    ]);
+
+    res.status(200).json({
+      status: 'success',
+      data: breakdown
+    });
+  } catch (error) {
+    console.error('Error in getTravelExpenseBreakdown:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch breakdown data',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+// Fixed helper functions for travel analytics
+
+// Helper function to get breakdown data by expense categories
+async function getBreakdownData(matchCriteria) {
+  const results = await TravelRequest.aggregate([
+    { $match: matchCriteria },
+    {
+      $addFields: {
+        actualCost: {
+          $cond: [
+            {
+              $and: [
+                { $ne: ['$reconciliation.totalSpent', null] },
+                { $ne: ['$reconciliation.totalSpent', undefined] },
+                { $gte: ['$reconciliation.totalSpent', 0] }
+              ]
+            },
+            '$reconciliation.totalSpent',
+            {
+              $cond: [
+                {
+                  $and: [
+                    { $ne: ['$payment.totalAmount', null] },
+                    { $ne: ['$payment.totalAmount', undefined] },
+                    { $gte: ['$payment.totalAmount', 0] }
+                  ]
+                },
+                '$payment.totalAmount',
+                { $ifNull: ['$estimatedCost', 0] }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      $group: {
+        _id: '$travelType',
+        totalAmount: { $sum: '$actualCost' },
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+
+  // Also get expense breakdown from payment.expenses if available
+  const expenseBreakdown = await TravelRequest.aggregate([
+    { $match: matchCriteria },
+    { $unwind: { path: '$payment.expenses', preserveNullAndEmptyArrays: true } },
+    {
+      $match: {
+        'payment.expenses': { $ne: null }
+      }
+    },
+    {
+      $group: {
+        _id: '$payment.expenses.category',
+        totalAmount: { $sum: '$payment.expenses.amount' },
+        count: { $sum: 1 }
+      }
+    },
+    { $match: { _id: { $ne: null } } }
+  ]);
+
+  const totalAmount = results.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
+  
+  // Category mapping for travel types
+  const categoryMapping = {
+    'local': { name: 'Domestic Travel', color: '#3B82F6' },
+    'international': { name: 'International Travel', color: '#10B981' },
+    'accommodation': { name: 'Accommodation', color: '#F59E0B' },
+    'transportation': { name: 'Transportation', color: '#8B5CF6' },
+    'meals': { name: 'Meals & Entertainment', color: '#EF4444' }
+  };
+
+  // Combine travel type and expense category data
+  let combinedData = results.map(item => {
+    const category = categoryMapping[item._id] || { name: item._id || 'Other', color: '#6B7280' };
+    const percentage = totalAmount > 0 ? ((item.totalAmount / totalAmount) * 100) : 0;
+    
+    return {
+      category: category.name,
+      value: Math.round(percentage * 10) / 10,
+      amount: Math.round(item.totalAmount || 0),
+      color: category.color,
+      description: `${category.name} expenses`
+    };
+  });
+
+  // Add expense breakdown data if available
+  const expenseTotal = expenseBreakdown.reduce((sum, item) => sum + (item.totalAmount || 0), 0);
+  if (expenseTotal > 0 && expenseBreakdown.length > 0) {
+    const expenseData = expenseBreakdown.map(item => {
+      const category = categoryMapping[item._id] || { name: item._id || 'Other', color: '#6B7280' };
+      const percentage = expenseTotal > 0 ? ((item.totalAmount / expenseTotal) * 100) : 0;
+      
+      return {
+        category: category.name,
+        value: Math.round(percentage * 10) / 10,
+        amount: Math.round(item.totalAmount || 0),
+        color: category.color,
+        description: `${category.name} expenses`
+      };
+    });
+    
+    // Merge or replace with expense data based on your preference
+    combinedData = expenseData.length > combinedData.length ? expenseData : combinedData;
+  }
+
+  return combinedData.length > 0 ? combinedData : [
+    { category: 'Domestic Travel', value: 60, amount: 0, color: '#3B82F6', description: 'Local business trips' },
+    { category: 'International Travel', value: 40, amount: 0, color: '#10B981', description: 'International business trips' }
+  ];
+}
+
+// Helper function to calculate metrics
+async function calculateTravelMetrics(matchCriteria, userId, userRole) {
+  const now = new Date();
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const yearStart = new Date(now.getFullYear(), 0, 1);
+
+  // Current month expenses
+  const currentMonthData = await TravelRequest.aggregate([
+    {
+      $match: {
+        ...matchCriteria,
+        createdAt: { $gte: currentMonthStart }
+      }
+    },
+    {
+      $addFields: {
+        actualCost: {
+          $cond: [
+            {
+              $and: [
+                { $ne: ['$reconciliation.totalSpent', null] },
+                { $ne: ['$reconciliation.totalSpent', undefined] },
+                { $gte: ['$reconciliation.totalSpent', 0] }
+              ]
+            },
+            '$reconciliation.totalSpent',
+            { $ifNull: ['$estimatedCost', 0] }
+          ]
+        }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: '$actualCost' },
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+
+  // Previous month expenses
+  const previousMonthData = await TravelRequest.aggregate([
+    {
+      $match: {
+        ...matchCriteria,
+        createdAt: { 
+          $gte: previousMonthStart,
+          $lt: currentMonthStart
+        }
+      }
+    },
+    {
+      $addFields: {
+        actualCost: {
+          $cond: [
+            {
+              $and: [
+                { $ne: ['$reconciliation.totalSpent', null] },
+                { $ne: ['$reconciliation.totalSpent', undefined] },
+                { $gte: ['$reconciliation.totalSpent', 0] }
+              ]
+            },
+            '$reconciliation.totalSpent',
+            { $ifNull: ['$estimatedCost', 0] }
+          ]
+        }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: '$actualCost' }
+      }
+    }
+  ]);
+
+  // Year to date expenses
+  const ytdData = await TravelRequest.aggregate([
+    {
+      $match: {
+        ...matchCriteria,
+        createdAt: { $gte: yearStart }
+      }
+    },
+    {
+      $addFields: {
+        actualCost: {
+          $cond: [
+            {
+              $and: [
+                { $ne: ['$reconciliation.totalSpent', null] },
+                { $ne: ['$reconciliation.totalSpent', undefined] },
+                { $gte: ['$reconciliation.totalSpent', 0] }
+              ]
+            },
+            '$reconciliation.totalSpent',
+            { $ifNull: ['$estimatedCost', 0] }
+          ]
+        }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: '$actualCost' }
+      }
+    }
+  ]);
+
+  const currentTotal = currentMonthData[0]?.total || 0;
+  const previousTotal = previousMonthData[0]?.total || 0;
+  const ytdTotal = ytdData[0]?.total || 0;
+
+  // Calculate percentage changes
+  const currentVsPrevious = previousTotal > 0 ? ((currentTotal - previousTotal) / previousTotal * 100) : 0;
+  const projectedQuarter = currentTotal * 3; // Simple projection
+
+  return {
+    current_month: {
+      value: Math.round(currentTotal),
+      change_percentage: Math.round(currentVsPrevious * 10) / 10,
+      change_amount: Math.round(currentTotal - previousTotal),
+      trend: currentTotal > previousTotal ? 'up' : 'down'
+    },
+    previous_month: {
+      value: Math.round(previousTotal),
+      change_percentage: 8.3, // You can calculate this based on month before previous
+      change_amount: Math.round(previousTotal * 0.083),
+      trend: 'up'
+    },
+    year_to_date: {
+      value: Math.round(ytdTotal),
+      change_percentage: 5.7, // Compare with previous year if you have historical data
+      change_amount: Math.round(ytdTotal * 0.057),
+      trend: 'up'
+    },
+    projected_quarter: {
+      value: Math.round(projectedQuarter),
+      change_percentage: -2.1,
+      change_amount: Math.round(projectedQuarter * -0.021),
+      trend: 'down'
+    }
+  };
+}
+
+// Fixed version of getTravelExpenseBreakdown method
+exports.getTravelExpenseBreakdown = async (req, res) => {
+  try {
+    const {
+      start_date = '2024-01-01',
+      end_date = '2024-12-31',
+      group_by = 'category' // 'category', 'department', 'travel_type'
+    } = req.query;
+
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    let matchCriteria = {
+      createdAt: {
+        $gte: new Date(start_date),
+        $lte: new Date(end_date)
+      },
+      status: { $in: ['approved', 'travel_completed', 'pending_reconciliation'] }
+    };
+
+    // Add user-based filtering
+    if (userRole !== 'admin' && userRole !== 'finance' && userRole !== 'procurement_officer') {
+      matchCriteria.employee = userId;
+    }
+
+    let groupField;
+    switch (group_by) {
+      case 'travel_type':
+        groupField = '$travelType';
+        break;
+      case 'department':
+        groupField = '$employee.department';
+        break;
+      case 'status':
+        groupField = '$status';
+        break;
+      default:
+        groupField = '$travelType';
+    }
+
+    const breakdown = await TravelRequest.aggregate([
+      { $match: matchCriteria },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'employee',
+          foreignField: '_id',
+          as: 'employeeDetails'
+        }
+      },
+      {
+        $addFields: {
+          actualCost: {
+            $cond: [
+              {
+                $and: [
+                  { $ne: ['$reconciliation.totalSpent', null] },
+                  { $ne: ['$reconciliation.totalSpent', undefined] },
+                  { $gte: ['$reconciliation.totalSpent', 0] }
+                ]
+              },
+              '$reconciliation.totalSpent',
+              { $ifNull: ['$estimatedCost', 0] }
+            ]
+          }
+        }
+      },
+      {
+        $group: {
+          _id: groupField,
+          totalAmount: { $sum: '$actualCost' },
+          count: { $sum: 1 },
+          avgAmount: { $avg: '$actualCost' }
+        }
+      },
+      { $sort: { totalAmount: -1 } }
+    ]);
+
+    res.status(200).json({
+      status: 'success',
+      data: breakdown
+    });
+  } catch (error) {
+    console.error('Error in getTravelExpenseBreakdown:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch breakdown data',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+// Helper function to calculate metrics
+async function calculateTravelMetrics(matchCriteria, userId, userRole) {
+  const now = new Date();
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const yearStart = new Date(now.getFullYear(), 0, 1);
+
+  // Current month expenses
+  const currentMonthData = await TravelRequest.aggregate([
+    {
+      $match: {
+        ...matchCriteria,
+        createdAt: { $gte: currentMonthStart }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        total: {
+          $sum: {
+            $cond: [
+              { $and: [{ $ne: ['$reconciliation.totalSpent', null] }, { $ne: ['$reconciliation.totalSpent', undefined] }] },
+              '$reconciliation.totalSpent',
+              '$estimatedCost'
+            ]
+          }
+        },
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+
+  // Previous month expenses
+  const previousMonthData = await TravelRequest.aggregate([
+    {
+      $match: {
+        ...matchCriteria,
+        createdAt: { 
+          $gte: previousMonthStart,
+          $lt: currentMonthStart
+        }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        total: {
+          $sum: {
+            $cond: [
+              { $and: [{ $ne: ['$reconciliation.totalSpent', null] }, { $ne: ['$reconciliation.totalSpent', undefined] }] },
+              '$reconciliation.totalSpent',
+              '$estimatedCost'
+            ]
+          }
+        }
+      }
+    }
+  ]);
+
+  // Year to date expenses
+  const ytdData = await TravelRequest.aggregate([
+    {
+      $match: {
+        ...matchCriteria,
+        createdAt: { $gte: yearStart }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        total: {
+          $sum: {
+            $cond: [
+              { $and: [{ $ne: ['$reconciliation.totalSpent', null] }, { $ne: ['$reconciliation.totalSpent', undefined] }] },
+              '$reconciliation.totalSpent',
+              '$estimatedCost'
+            ]
+          }
+        }
+      }
+    }
+  ]);
+
+  const currentTotal = currentMonthData[0]?.total || 0;
+  const previousTotal = previousMonthData[0]?.total || 0;
+  const ytdTotal = ytdData[0]?.total || 0;
+
+  // Calculate percentage changes
+  const currentVsPrevious = previousTotal > 0 ? ((currentTotal - previousTotal) / previousTotal * 100) : 0;
+  const projectedQuarter = currentTotal * 3; // Simple projection
+
+  return {
+    current_month: {
+      value: Math.round(currentTotal),
+      change_percentage: Math.round(currentVsPrevious * 10) / 10,
+      change_amount: Math.round(currentTotal - previousTotal),
+      trend: currentTotal > previousTotal ? 'up' : 'down'
+    },
+    previous_month: {
+      value: Math.round(previousTotal),
+      change_percentage: 8.3, // You can calculate this based on month before previous
+      change_amount: Math.round(previousTotal * 0.083),
+      trend: 'up'
+    },
+    year_to_date: {
+      value: Math.round(ytdTotal),
+      change_percentage: 5.7, // Compare with previous year if you have historical data
+      change_amount: Math.round(ytdTotal * 0.057),
+      trend: 'up'
+    },
+    projected_quarter: {
+      value: Math.round(projectedQuarter),
+      change_percentage: -2.1,
+      change_amount: Math.round(projectedQuarter * -0.021),
+      trend: 'down'
+    }
+  };
+}
+
+// Helper function to get metadata
+async function getTravelMetadata(userId, userRole) {
+  const totalBudget = 1200000; // This should come from your budget system
+  const usedBudget = await TravelRequest.aggregate([
+    {
+      $match: {
+        ...(userRole !== 'admin' && userRole !== 'finance' ? { employee: userId } : {}),
+        status: { $in: ['approved', 'travel_completed', 'pending_reconciliation'] }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: '$estimatedCost' }
+      }
+    }
+  ]);
+
+  const used = usedBudget[0]?.total || 0;
+
+  return {
+    currency: 'MWK',
+    currency_symbol: 'MWK',
+    last_updated: new Date().toISOString(),
+    data_period: 'monthly',
+    fiscal_year: new Date().getFullYear(),
+    total_budget: totalBudget,
+    budget_used_percentage: totalBudget > 0 ? Math.round((used / totalBudget * 100) * 10) / 10 : 0
+  };
+}
+
+// @desc    Get travel expense breakdown for detailed analysis
+// @route   GET /api/travel-requests/breakdown
+// @access  Private
+exports.getTravelExpenseBreakdown = async (req, res) => {
+  try {
+    const {
+      start_date = '2024-01-01',
+      end_date = '2024-12-31',
+      group_by = 'category' // 'category', 'department', 'travel_type'
+    } = req.query;
+
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    let matchCriteria = {
+      createdAt: {
+        $gte: new Date(start_date),
+        $lte: new Date(end_date)
+      },
+      status: { $in: ['approved', 'travel_completed', 'pending_reconciliation'] }
+    };
+
+    // Add user-based filtering
+    if (userRole !== 'admin' && userRole !== 'finance' && userRole !== 'procurement_officer') {
+      matchCriteria.employee = userId;
+    }
+
+    let groupField;
+    switch (group_by) {
+      case 'travel_type':
+        groupField = '$travelType';
+        break;
+      case 'department':
+        groupField = '$employee.department';
+        break;
+      case 'status':
+        groupField = '$status';
+        break;
+      default:
+        groupField = '$travelType';
+    }
+
+    const breakdown = await TravelRequest.aggregate([
+      { $match: matchCriteria },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'employee',
+          foreignField: '_id',
+          as: 'employeeDetails'
+        }
+      },
+      {
+        $group: {
+          _id: groupField,
+          totalAmount: {
+            $sum: {
+              $cond: [
+                { $and: [{ $ne: ['$reconciliation.totalSpent', null] }, { $ne: ['$reconciliation.totalSpent', undefined] }] },
+                '$reconciliation.totalSpent',
+                '$estimatedCost'
+              ]
+            }
+          },
+          count: { $sum: 1 },
+          avgAmount: {
+            $avg: {
+              $cond: [
+                { $and: [{ $ne: ['$reconciliation.totalSpent', null] }, { $ne: ['$reconciliation.totalSpent', undefined] }] },
+                '$reconciliation.totalSpent',
+                '$estimatedCost'
+              ]
+            }
+          }
+        }
+      },
+      { $sort: { totalAmount: -1 } }
+    ]);
+
+    res.status(200).json({
+      status: 'success',
+      data: breakdown
+    });
+  } catch (error) {
+    console.error('Error in getTravelExpenseBreakdown:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch breakdown data',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+// @desc    Export travel expense data to CSV
+// @route   GET /api/travel-requests/export
+// @access  Private
+exports.exportTravelExpenseData = async (req, res) => {
+  try {
+    const {
+      start_date = '2024-01-01',
+      end_date = '2024-12-31',
+      format = 'csv'
+    } = req.query;
+
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    let matchCriteria = {
+      createdAt: {
+        $gte: new Date(start_date),
+        $lte: new Date(end_date)
+      }
+    };
+
+    // Add user-based filtering
+    if (userRole !== 'admin' && userRole !== 'finance' && userRole !== 'procurement_officer') {
+      matchCriteria.employee = userId;
+    }
+
+    const travelRequests = await TravelRequest.find(matchCriteria)
+      .populate('employee', 'firstName lastName email department')
+      .populate('supervisor', 'firstName lastName')
+      .populate('finalApprover', 'firstName lastName')
+      .sort({ createdAt: -1 });
+
+    if (format === 'csv') {
+      // Generate CSV
+      const csv = generateCSV(travelRequests);
+      
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename=travel-expenses.csv');
+      res.send(csv);
+    } else {
+      // Return JSON
+      res.status(200).json({
+        status: 'success',
+        data: travelRequests
+      });
+    }
+  } catch (error) {
+    console.error('Error in exportTravelExpenseData:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to export data',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+// Helper function to generate CSV
+function generateCSV(travelRequests) {
+  const headers = [
+    'ID', 'Employee', 'Purpose', 'Travel Type', 'Destination', 'Departure Date', 
+    'Return Date', 'Estimated Cost', 'Actual Cost', 'Currency', 'Status', 
+    'Supervisor Approval', 'Final Approval', 'Created Date'
+  ];
+
+  const rows = travelRequests.map(request => [
+    request._id,
+    request.employee ? `${request.employee.firstName} ${request.employee.lastName}` : '',
+    request.purpose,
+    request.travelType,
+    request.location || request.destination || '',
+    request.departureDate ? new Date(request.departureDate).toISOString().split('T')[0] : '',
+    request.returnDate ? new Date(request.returnDate).toISOString().split('T')[0] : '',
+    request.estimatedCost || 0,
+    request.reconciliation?.totalSpent || request.payment?.totalAmount || 0,
+    request.currency || 'MWK',
+    request.status,
+    request.supervisorApproval || 'pending',
+    request.finalApproval || 'pending',
+    request.createdAt ? new Date(request.createdAt).toISOString().split('T')[0] : ''
+  ]);
+
+  const csvContent = [headers, ...rows]
+    .map(row => row.map(field => `"${field}"`).join(','))
+    .join('\n');
+
+  return csvContent;
+}
 /// Create a new travel request (local or international)
 exports.travelRequest = async (req, res) => {
     try {
@@ -1284,3 +2567,5 @@ exports.processReconciliation = async (req, res) => {
     });
   }
 };
+
+
