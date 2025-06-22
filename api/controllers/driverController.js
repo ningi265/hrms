@@ -727,7 +727,8 @@ const getDriverById = async (req, res) => {
   }
 };
 
-// Update driver location (real GPS data from mobile app or manual update)
+{/*
+     // Update driver location (real GPS data from mobile app or manual update)
 const updateDriverLocation = async (req, res) => {
   try {
     const { driverId } = req.params;
@@ -928,6 +929,8 @@ const getDriverLocations = async (req, res) => {
     });
   }
 };
+
+  */}
 
 // Helper functions for real data
 
