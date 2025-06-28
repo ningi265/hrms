@@ -39,11 +39,19 @@ router.put("/:id/approve", protect(["admin"]), approvePO);
 router.put("/:id/delivery-status", protect(["admin", "Vendor"]), updateDeliveryStatus);
 
 
-router.put("/:id/delivery-confirmed", protect(["admin", "procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance"]), confirmDelivery);
+router.put("/:id/delivery-confirmed", protect([
+  "procurement_officer", 
+  "admin", 
+  "IT/Technical",
+  "Executive (CEO, CFO, etc.)",
+  "Management",
+  "Sales/Marketing",
+  "Operations",
+  "Human Resources",
+  "Accounting/Finance",
+  "Other",
+  "vendor"
+]),confirmDelivery);
 
 // Reject PO (Admin Only)
 router.put("/:id/reject", protect(["admin"]), rejectPO);
@@ -66,11 +74,19 @@ router.get("/:id", protect(["procurement_officer", "admin", "Vendor","IT/Technic
 router.put("/:id/delivery", protect(["Vendor"]), updateDeliveryStatus);
 
 // Procurement officer confirms delivery
-router.put("/:id/confirm", protect(["procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance"]), confirmDelivery);
+router.put("/:id/confirm", protect([
+  "procurement_officer", 
+  "admin", 
+  "IT/Technical",
+  "Executive (CEO, CFO, etc.)",
+  "Management",
+  "Sales/Marketing",
+  "Operations",
+  "Human Resources",
+  "Accounting/Finance",
+  "Other",
+  "vendor"
+]), confirmDelivery);
 
 
 
