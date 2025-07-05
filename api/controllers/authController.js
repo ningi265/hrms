@@ -8,6 +8,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const postmark = require('postmark');     
 //const {sendEmailNotification} = require("../services/notificationService");
 
 // Twilio setup
@@ -18,12 +19,18 @@ const twilioClient = twilio(
 
 // Nodemailer transport setup for Gmail
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'mail.privateemail.com',
+  port: 587,
+  secure: false, // true for 465, false for other ports
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_APP_PASSWORD, // Use app password for Gmail
+    user: 'noreply@nexusmwi.com',
+    pass: process.env.EMAIL_PASSWORD,
   },
+  tls: {
+    rejectUnauthorized: false // For self-signed certificates
+  }
 });
+
 
 const generateVerificationCode = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -629,7 +636,7 @@ exports.resetPassword = async (req, res) => {
 const sendVerificationEmail = async (user, verificationCode) => {
   // Email template
   const mailOptions = {
-    from: `"${process.env.EMAIL_FROM_NAME || 'NyasaTech'}" <${process.env.EMAIL_USER}>`,
+    from: `"${process.env.EMAIL_FROM_NAME || 'NexusMWI'}" <${process.env.EMAIL_USER}>`,
     to: user.email,
     subject: 'Email Verification Code',
     html: `
@@ -698,45 +705,140 @@ exports.sendVerification = async (req, res) => {
 // Send verification email
 exports.sendEmailVerification = async (req, res) => {
   try {
+    console.log('\n🐛 DEBUG: Email verification request started');
+    console.log('📨 Request body:', req.body);
+    
     const { email } = req.body;
 
     if (!email) {
+      console.log('❌ DEBUG: No email provided in request');
       return res.status(400).json({ message: "Email is required" });
     }
 
+    console.log('📧 DEBUG: Target email:', email);
+
+    // Verify environment variables
+    console.log('🔍 DEBUG: Environment variables check:');
+    console.log('- EMAIL_PASSWORD:', process.env.EMAIL_PASSWORD ? 'SET' : 'NOT SET');
+
+    if (!process.env.EMAIL_PASSWORD) {
+      console.log('❌ DEBUG: Email password missing');
+      return res.status(500).json({ 
+        message: "Email service not configured properly",
+        debug: {
+          emailPassword: !!process.env.EMAIL_PASSWORD
+        }
+      });
+    }
+
     // Find the user by email
+    console.log('🔍 DEBUG: Looking for user with email:', email);
     const user = await User.findOne({ email });
     if (!user) {
+      console.log('❌ DEBUG: User not found with email:', email);
       return res.status(404).json({ message: "User not found" });
     }
 
+    console.log('✅ DEBUG: User found:', user.firstName, user.lastName);
+
     // Generate verification code
     const verificationCode = generateVerificationCode();
+    console.log('🔑 DEBUG: Generated verification code:', verificationCode);
+    
     user.emailVerificationCode = verificationCode;
     user.emailVerificationExpires = Date.now() + 3600000; // 1 hour
     await user.save({ validateBeforeSave: false });
 
-    // Send email
+    console.log('💾 DEBUG: User updated with verification code');
+
+    // Test SMTP connection first
+    console.log('🧪 DEBUG: Testing SMTP connection to mail.privateemail.com...');
+    
     try {
-      await sendVerificationEmail(user, verificationCode);
+      // Verify SMTP connection
+      await transporter.verify();
+      console.log('✅ DEBUG: SMTP connection successful');
+
+      // Prepare email
+      const mailOptions = {
+        from: {
+          name: 'NexusMWI',
+          address: 'noreply@nexusmwi.com'
+        },
+        to: email,
+        subject: 'Email Verification Code - NexusMWI',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 5px;">
+            <h2 style="color: #333;">Verify Your Email</h2>
+            <p>Hello ${user.firstName || 'there'},</p>
+            <p>Your verification code is:</p>
+            <div style="padding: 15px; background-color: #f5f5f5; font-size: 32px; text-align: center; font-weight: bold; letter-spacing: 8px; margin: 30px 0; border-radius: 8px; border: 2px solid #007bff;">
+              ${verificationCode}
+            </div>
+            <p>This code will expire in 1 hour.</p>
+            <p>If you didn't request this code, please ignore this email.</p>
+          </div>
+        `,
+        // Add text version for non-HTML clients
+        text: `Your verification code is: ${verificationCode}\nThis code will expire in 1 hour.`
+      };
+
+      console.log('📤 DEBUG: Sending email with options:', {
+        from: mailOptions.from,
+        to: mailOptions.to,
+        subject: mailOptions.subject
+      });
+
+      // Send email
+      const info = await transporter.sendMail(mailOptions);
+      
+      console.log('✅ DEBUG: Email sent successfully!');
+      console.log('📨 Message ID:', info.messageId);
+      console.log('📋 Response:', info.response);
 
       res.status(200).json({ 
         message: "Verification code sent to your email successfully",
-        email: email 
+        email: email
       });
-    } catch (emailError) {
-      console.error("Email sending error:", emailError);
+
+    } catch (smtpError) {
+      console.error('❌ DEBUG: SMTP failed with error:', smtpError.message);
+      console.error('📊 SMTP Error details:', {
+        code: smtpError.code,
+        command: smtpError.command,
+        response: smtpError.response,
+        responseCode: smtpError.responseCode,
+        stack: smtpError.stack
+      });
+
+      // Clean up verification code since email failed
       user.emailVerificationCode = undefined;
       user.emailVerificationExpires = undefined;
       await user.save({ validateBeforeSave: false });
       
-      throw new Error("Failed to send verification email");
+      res.status(500).json({
+        message: "Failed to send verification email",
+        error: smtpError.message,
+        debug: {
+          smtpError: {
+            code: smtpError.code,
+            command: smtpError.command,
+            response: smtpError.response
+          }
+        }
+      });
     }
 
   } catch (err) {
-    console.error("Error in sendEmailVerification:", err);
+    console.error("❌ DEBUG: General error in sendEmailVerification:", err);
+    console.error("📊 Error stack:", err.stack);
+    
     res.status(500).json({ 
-      message: err.message || "Failed to send email verification code" 
+      message: err.message || "Failed to send email verification code",
+      debug: {
+        error: err.message,
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+      }
     });
   }
 };
