@@ -17,19 +17,9 @@ const twilioClient = twilio(
     process.env.TWILIO_AUTH_TOKEN
 );
 
-// Nodemailer transport setup for Gmail
-const transporter = nodemailer.createTransport({
-  host: 'mail.privateemail.com',
-  port: 587,
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: 'noreply@nexusmwi.com',
-    pass: process.env.EMAIL_PASSWORD,
-  },
-  tls: {
-    rejectUnauthorized: false // For self-signed certificates
-  }
-});
+
+const sgMail = require('@sendgrid/mail');
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 
 const generateVerificationCode = () => {
@@ -719,14 +709,14 @@ exports.sendEmailVerification = async (req, res) => {
 
     // Verify environment variables
     console.log('🔍 DEBUG: Environment variables check:');
-    console.log('- EMAIL_PASSWORD:', process.env.EMAIL_PASSWORD ? 'SET' : 'NOT SET');
+    console.log('- SENDGRID_API_KEY:', process.env.SENDGRID_API_KEY ? 'SET' : 'NOT SET');
 
-    if (!process.env.EMAIL_PASSWORD) {
-      console.log('❌ DEBUG: Email password missing');
+    if (!process.env.SENDGRID_API_KEY) {
+      console.log('❌ DEBUG: SendGrid API key missing');
       return res.status(500).json({ 
         message: "Email service not configured properly",
         debug: {
-          emailPassword: !!process.env.EMAIL_PASSWORD
+          sendGridConfigured: !!process.env.SENDGRID_API_KEY
         }
       });
     }
@@ -751,64 +741,60 @@ exports.sendEmailVerification = async (req, res) => {
 
     console.log('💾 DEBUG: User updated with verification code');
 
-    // Test SMTP connection first
-    console.log('🧪 DEBUG: Testing SMTP connection to mail.privateemail.com...');
-    
-    try {
-      // Verify SMTP connection
-      await transporter.verify();
-      console.log('✅ DEBUG: SMTP connection successful');
-
-      // Prepare email
-      const mailOptions = {
-        from: {
-          name: 'NexusMWI',
-          address: 'noreply@nexusmwi.com'
-        },
-        to: email,
-        subject: 'Email Verification Code - NexusMWI',
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 5px;">
-            <h2 style="color: #333;">Verify Your Email</h2>
-            <p>Hello ${user.firstName || 'there'},</p>
-            <p>Your verification code is:</p>
-            <div style="padding: 15px; background-color: #f5f5f5; font-size: 32px; text-align: center; font-weight: bold; letter-spacing: 8px; margin: 30px 0; border-radius: 8px; border: 2px solid #007bff;">
-              ${verificationCode}
-            </div>
-            <p>This code will expire in 1 hour.</p>
-            <p>If you didn't request this code, please ignore this email.</p>
+    // Prepare email
+    const msg = {
+      to: email,
+      from: {
+        name: 'NexusMWI',
+        email: 'noreply@nexusmwi.com' // Must be verified in SendGrid
+      },
+      subject: 'Email Verification Code - NexusMWI',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 5px;">
+          <h2 style="color: #333;">Verify Your Email</h2>
+          <p>Hello ${user.firstName || 'there'},</p>
+          <p>Your verification code is:</p>
+          <div style="padding: 15px; background-color: #f5f5f5; font-size: 32px; text-align: center; font-weight: bold; letter-spacing: 8px; margin: 30px 0; border-radius: 8px; border: 2px solid #007bff;">
+            ${verificationCode}
           </div>
-        `,
-        // Add text version for non-HTML clients
-        text: `Your verification code is: ${verificationCode}\nThis code will expire in 1 hour.`
-      };
+          <p>This code will expire in 1 hour.</p>
+          <p>If you didn't request this code, please ignore this email.</p>
+        </div>
+      `,
+      text: `Your verification code is: ${verificationCode}\nThis code will expire in 1 hour.`
+    };
 
-      console.log('📤 DEBUG: Sending email with options:', {
-        from: mailOptions.from,
-        to: mailOptions.to,
-        subject: mailOptions.subject
-      });
+    console.log('📤 DEBUG: Sending email with options:', {
+      to: msg.to,
+      subject: msg.subject
+    });
 
-      // Send email
-      const info = await transporter.sendMail(mailOptions);
+    // Send email via SendGrid API
+    try {
+      const [response] = await sgMail.send(msg);
       
       console.log('✅ DEBUG: Email sent successfully!');
-      console.log('📨 Message ID:', info.messageId);
-      console.log('📋 Response:', info.response);
+      console.log('📨 SendGrid Response:', {
+        statusCode: response.statusCode,
+        headers: response.headers,
+        body: response.body
+      });
 
       res.status(200).json({ 
         message: "Verification code sent to your email successfully",
-        email: email
+        email: email,
+        debug: {
+          method: 'SendGrid API',
+          status: response.statusCode
+        }
       });
 
-    } catch (smtpError) {
-      console.error('❌ DEBUG: SMTP failed with error:', smtpError.message);
-      console.error('📊 SMTP Error details:', {
-        code: smtpError.code,
-        command: smtpError.command,
-        response: smtpError.response,
-        responseCode: smtpError.responseCode,
-        stack: smtpError.stack
+    } catch (sendGridError) {
+      console.error('❌ DEBUG: SendGrid failed with error:', sendGridError.message);
+      console.error('📊 SendGrid Error details:', {
+        code: sendGridError.code,
+        response: sendGridError.response,
+        stack: sendGridError.stack
       });
 
       // Clean up verification code since email failed
@@ -818,12 +804,11 @@ exports.sendEmailVerification = async (req, res) => {
       
       res.status(500).json({
         message: "Failed to send verification email",
-        error: smtpError.message,
+        error: sendGridError.message,
         debug: {
-          smtpError: {
-            code: smtpError.code,
-            command: smtpError.command,
-            response: smtpError.response
+          sendGridError: {
+            code: sendGridError.code,
+            response: sendGridError.response
           }
         }
       });

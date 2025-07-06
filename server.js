@@ -76,9 +76,6 @@ const travelRequestRoutes = require("./routes/travel");
 const departmentsRoutes = require("./routes/departmentRoutes");
 const driverRoutes = require("./routes/driverRoutes");
 
-// Import new budget allocation routes
-const budgetRoutes = require("./routes/budgetRoutes");
-
 // Existing routes
 app.use("/api/auth", authRoutes);
 app.use("/api/invoices", invoiceRoutes);
@@ -91,135 +88,7 @@ app.use("/api/travel-requests", travelRequestRoutes);
 app.use("/api/departments", departmentsRoutes);
 app.use("/api/drivers", driverRoutes);
 
-// New budget allocation routes
-app.use("/api/budget-allocations", budgetRoutes);
-
-// ===== BUDGET-SPECIFIC API ENDPOINTS =====
-
-// Get budget overview for dashboard
-app.get('/api/budget/overview', async (req, res) => {
-  try {
-    const BudgetAllocation = require('./models/budget');
-    const Department = require('./models/departments');
-    
-    // Get current budget allocation
-    const currentAllocation = await BudgetAllocation.getCurrentAllocation();
-    
-    // Get department stats
-    const totalDepartments = await Department.countDocuments({ status: 'active' });
-    const totalBudget = await Department.aggregate([
-      { $match: { status: 'active' } },
-      { $group: { _id: null, total: { $sum: '$budget' } } }
-    ]);
-    
-    const overview = {
-      currentPeriod: currentAllocation ? currentAllocation.budgetPeriod : null,
-      totalBudget: currentAllocation ? currentAllocation.totalBudget : (totalBudget[0]?.total || 0),
-      totalAllocated: currentAllocation ? currentAllocation.totalAllocated : 0,
-      remainingBudget: currentAllocation ? currentAllocation.remainingBudget : 0,
-      allocationEfficiency: currentAllocation ? currentAllocation.allocationEfficiency : 0,
-      totalDepartments,
-      status: currentAllocation ? currentAllocation.status : 'no_allocation',
-      lastUpdated: currentAllocation ? currentAllocation.updatedAt : null
-    };
-
-    res.json({
-      success: true,
-      data: overview
-    });
-  } catch (error) {
-    console.error('Error fetching budget overview:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch budget overview',
-      error: error.message
-    });
-  }
-});
-
-// Get budget trends and analytics
-app.get('/api/budget/analytics', async (req, res) => {
-  try {
-    const BudgetAllocation = require('./models/budget');
-    const { period = 'yearly', limit = 12 } = req.query;
-    
-    // Get historical allocations
-    const allocations = await BudgetAllocation.find({ status: { $ne: 'cancelled' } })
-      .sort({ budgetYear: -1, quarter: -1 })
-      .limit(parseInt(limit))
-      .populate('departmentAllocations.department', 'name');
-
-    // Calculate trends
-    const trends = {
-      budgetTrends: allocations.map(alloc => ({
-        period: alloc.budgetPeriod,
-        totalBudget: alloc.totalBudget,
-        totalAllocated: alloc.totalAllocated,
-        efficiency: alloc.allocationEfficiency
-      })),
-      departmentTrends: {},
-      categoryTrends: {}
-    };
-
-    // Calculate department-wise trends
-    allocations.forEach(alloc => {
-      alloc.departmentAllocations.forEach(dept => {
-        if (!trends.departmentTrends[dept.departmentName]) {
-          trends.departmentTrends[dept.departmentName] = [];
-        }
-        trends.departmentTrends[dept.departmentName].push({
-          period: alloc.budgetPeriod,
-          allocation: dept.allocatedAmount,
-          percentage: dept.allocationPercentage
-        });
-      });
-    });
-
-    res.json({
-      success: true,
-      data: trends
-    });
-  } catch (error) {
-    console.error('Error fetching budget analytics:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch budget analytics',
-      error: error.message
-    });
-  }
-});
-
-// Validate budget allocation before saving
-app.post('/api/budget/validate', async (req, res) => {
-  try {
-    const { BudgetValidator } = require('./utils/budget');
-    const { allocation, constraints } = req.body;
-
-    const validation = BudgetValidator.validateAllocation(allocation);
-    const constraintValidation = BudgetValidator.validateConstraints(
-      allocation.departmentAllocations, 
-      constraints
-    );
-
-    res.json({
-      success: true,
-      data: {
-        allocationValidation: validation,
-        constraintValidation: constraintValidation,
-        overallValid: validation.isValid && constraintValidation.isValid
-      }
-    });
-  } catch (error) {
-    console.error('Error validating budget allocation:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to validate budget allocation',
-      error: error.message
-    });
-  }
-});
-
-// ===== LOCATION SERVICE CONTROL ENDPOINTS =====
+// ===== NEW LOCATION SERVICE CONTROL ENDPOINTS =====
 
 // Get location service status
 app.get('/api/location-service/status', (req, res) => {
@@ -339,42 +208,11 @@ app.post('/api/location-service/update-driver/:driverId', async (req, res) => {
   }
 });
 
+
+
 // Enhanced Socket.IO connection handling for live location tracking
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
-
-  // ===== BUDGET-RELATED SOCKET EVENTS =====
-
-  // Handle budget allocation updates
-  socket.on('budget-allocation-update', (data) => {
-    socket.broadcast.emit('budget-allocation-changed', {
-      type: 'allocation_updated',
-      allocation: data.allocation,
-      timestamp: new Date(),
-      updatedBy: data.updatedBy
-    });
-  });
-
-  // Handle budget approval events
-  socket.on('budget-approval', (data) => {
-    const { allocationId, action, approver, comments } = data;
-    
-    socket.broadcast.emit('budget-approval-update', {
-      allocationId,
-      action, // 'approved' or 'rejected'
-      approver,
-      comments,
-      timestamp: new Date()
-    });
-  });
-
-  // Handle budget notifications
-  socket.on('budget-notification', (data) => {
-    socket.broadcast.emit('budget-notification-received', {
-      ...data,
-      timestamp: new Date()
-    });
-  });
 
   // ===== ENHANCED LOCATION TRACKING EVENTS =====
 
@@ -523,12 +361,6 @@ io.on('connection', (socket) => {
   socket.on('join-department', (departmentId) => {
     socket.join(`department-${departmentId}`);
     console.log(`Client ${socket.id} joined department-${departmentId}`);
-  });
-
-  // Handle join room for budget-specific updates
-  socket.on('join-budget-updates', (userId) => {
-    socket.join(`budget-updates-${userId}`);
-    console.log(`Client ${socket.id} joined budget updates`);
   });
 
   // Handle leave room
@@ -763,7 +595,6 @@ server.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
   console.log(`WebSocket server is ready on port ${PORT}`);
   console.log(`Live location tracking is ${locationService ? 'enabled' : 'disabled'}`);
-  console.log('Budget allocation system is ready');
 });
 
 // Export for testing purposes
