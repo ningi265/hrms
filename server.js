@@ -75,6 +75,7 @@ const invoiceRoutes = require("./routes/invoiceRoutes");
 const travelRequestRoutes = require("./routes/travel");
 const departmentsRoutes = require("./routes/departmentRoutes");
 const driverRoutes = require("./routes/driverRoutes");
+const invitationRoutes = require("./routes/invitationRoutes");
 
 // Existing routes
 app.use("/api/auth", authRoutes);
@@ -87,6 +88,7 @@ app.use('/api/purchase-orders', purchaseOrderRoutes);
 app.use("/api/travel-requests", travelRequestRoutes);
 app.use("/api/departments", departmentsRoutes);
 app.use("/api/drivers", driverRoutes);
+app.use("/api/invitations", invitationRoutes);
 
 // ===== NEW LOCATION SERVICE CONTROL ENDPOINTS =====
 
