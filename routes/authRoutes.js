@@ -34,7 +34,8 @@ const {
   uploadAvatar,
   getEmployees,
   getEmployeeById,
-  completeRegistration
+  completeRegistration,
+  getUsersForManagement
 } = require("../api/controllers/authController");
 const { protect } = require("../api/middleware/authMiddleware");
 
@@ -77,6 +78,9 @@ router.get("/drivers", protect([
   "Other",
   "vendor"
 ]), getDrivers);
+
+
+router.get("/users", getUsersForManagement);
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
 router.get("/employees", protect([
   "procurement_officer", 

@@ -7,6 +7,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
 
+
 // Load environment variables
 dotenv.config();
 
@@ -17,7 +18,7 @@ const server = http.createServer(app);
 // Socket.IO setup with CORS
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:3000",
+    origin: process.env.CLIENT_URL || "http://localhost:3000" ,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     credentials: true
   }

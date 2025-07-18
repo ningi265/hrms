@@ -2377,3 +2377,54 @@ exports.uploadAvatar = (req, res) => {
     }
   });
 };
+
+
+// Add this to authController.js
+exports.getUsersForManagement = async (req, res) => {
+  try {
+    // Get all users with basic information
+    const users = await User.find({})
+      .select('firstName lastName email role department status lastLoginAt')
+      .populate('departmentId', 'name')
+      .lean();
+
+    // Map the users to the format expected by the frontend
+    const formattedUsers = users.map(user => ({
+      id: user._id,
+      name: `${user.firstName} ${user.lastName}`,
+      email: user.email,
+      role: user.role || 'Employee',
+      department: user.departmentId?.name || user.department || 'Unassigned',
+      status: user.status || 'inactive',
+      lastLogin: user.lastLoginAt ? new Date(user.lastLoginAt).toISOString().split('T')[0] : 'Never',
+      permissions: getPermissionsForRole(user.role) // Helper function to map roles to permissions
+    }));
+
+    res.status(200).json(formattedUsers);
+  } catch (err) {
+    console.error("Error in getUsersForManagement:", err);
+    res.status(500).json({ 
+      message: "Failed to fetch users", 
+      error: err.message 
+    });
+  }
+};
+
+// Helper function to map roles to permissions
+function getPermissionsForRole(role) {
+  const rolePermissions = {
+    'IT/Technical': ['system_settings', 'technical_support', 'user_management'],
+    'Executive': ['full_access', 'financial_reports', 'budget_management'],
+    'Management': ['approve_orders', 'manage_team', 'view_reports'],
+    'Sales/Marketing': ['create_requisition', 'view_orders', 'customer_management'],
+    'Driver': ['view_assignments', 'update_status'],
+    'Operations': ['inventory_management', 'order_processing', 'vendor_communication'],
+    'Human Resources': ['employee_management', 'onboarding', 'performance_reviews'],
+    'Accounting/Finance': ['approve_invoices', 'budget_management', 'financial_reports'],
+    'Admin': ['full_access', 'user_management', 'system_settings'],
+    'Vendor': ['view_orders', 'update_status'],
+    'employee': ['create_requisition', 'view_orders']
+  };
+
+  return rolePermissions[role] || ['create_requisition', 'view_orders'];
+}
