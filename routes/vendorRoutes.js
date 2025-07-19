@@ -13,31 +13,31 @@ router.post("/", protect(["admin", "procurement_officer","IT/Technical",
 router.get("/", protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
-        "Human Resources",
+        "Human Resources","Enterprise(CEO, CFO, etc.)",
         "Accounting/Finance"]), getVendors);
 
 router.get("/me", protect(["admin", "procurement_officer", "Vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]),getVendorByUser);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]),getVendorByUser);
 
 router.put("/:id", protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), updateVendor);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), updateVendor);
 router.delete("/:id", protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), deleteVendor);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), deleteVendor);
 
 router.post('/register', protect(["admin", "Vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), 
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), 
     vendorController.uploadPowerOfAttorney, 
     vendorController.registerVendor
 );
@@ -50,46 +50,46 @@ router.get('/by-user', protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), vendorController.getVendorByUser);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), vendorController.getVendorByUser);
 
 // GET /api/vendors - Get all vendors
 router.get('/', protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), vendorController.getVendors);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), vendorController.getVendors);
 router.get('/vendor-data', protect(["admin", "Vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), vendorController.getVendorRegistrationData );
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), vendorController.getVendorRegistrationData );
 // GET /api/vendors/:vendorId - Get specific vendor details
 router.get('/:vendorId', protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), vendorController.getVendorDetails);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), vendorController.getVendorDetails);
 
 // POST /api/vendors - Add vendor (legacy method for compatibility)
 router.post('/', protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), vendorController.addVendor);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), vendorController.addVendor);
 
 // PUT /api/vendors/:id - Update vendor
 router.put('/:id', protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), vendorController.updateVendor);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), vendorController.updateVendor);
 
 // DELETE /api/vendors/:id - Delete vendor
 router.delete('/:id', protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), vendorController.deleteVendor);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), vendorController.deleteVendor);
 
 
         // POST /api/vendors/admin/approve/:vendorId - Approve vendor registration
@@ -98,7 +98,7 @@ router.post('/approve/:vendorId',
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), 
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), 
     vendorController.approveVendor
 );
 
@@ -108,7 +108,7 @@ router.post('/reject/:vendorId',
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), 
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), 
     vendorController.rejectVendor
 );
 // Admin only routes (requires admin role)
@@ -118,7 +118,7 @@ router.get('/admin/pending',
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]),
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]),
     vendorController.getPendingRegistrations
 );
 
@@ -130,7 +130,7 @@ router.get('/pending/registration',
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), 
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), 
     vendorController.getPendingRegistrations
 );
 module.exports = router;

@@ -19,19 +19,19 @@ router.post("/", protect(["procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), createPO);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), createPO);
 
 router.get("/stats", protect(["admin","Vendor","IT/Technical",
     "Executive (CEO, CFO, etc.)",
     "Management",
     "Human Resources",
-    "Accounting/Finance"]), getPOStats);
+    "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getPOStats);
 
 router.put("/:id/vendor/confirm", protect(["admin","Vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), confirmPO);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), confirmPO);
 
 // Approve PO (Admin Only)
 router.put("/:id/approve", protect(["admin"]), approvePO);
@@ -50,7 +50,7 @@ router.put("/:id/delivery-confirmed", protect([
   "Human Resources",
   "Accounting/Finance",
   "Other",
-  "vendor"
+  "vendor","Enterprise(CEO, CFO, etc.)"
 ]),confirmDelivery);
 
 // Reject PO (Admin Only)
@@ -61,14 +61,14 @@ router.get("/", protect(["procurement_officer", "admin", "Vendor","IT/Technical"
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getAllPOs);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getAllPOs);
 
 // Get Single PO
 router.get("/:id", protect(["procurement_officer", "admin", "Vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getPOById);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getPOById);
 
 // Vendor updates delivery status
 router.put("/:id/delivery", protect(["Vendor"]), updateDeliveryStatus);
@@ -85,7 +85,7 @@ router.put("/:id/confirm", protect([
   "Human Resources",
   "Accounting/Finance",
   "Other",
-  "vendor"
+  "vendor","Enterprise(CEO, CFO, etc.)"
 ]), confirmDelivery);
 
 

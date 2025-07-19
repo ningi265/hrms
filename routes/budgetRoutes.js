@@ -67,43 +67,43 @@ const validateDepartmentAllocation = (req, res, next) => {
 
 // GET /api/budget-allocations - Get all budget allocations
 router.get('/', 
-protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee']),
+protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee',"Enterprise(CEO, CFO, etc.)"]),
   budgetAllocationController.getAllBudgetAllocations
 );
 
 // GET /api/budget-allocations/current - Get current active budget allocation
 router.get('/current', 
- protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee']),
+ protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee',"Enterprise(CEO, CFO, etc.)"]),
   budgetAllocationController.getCurrentBudgetAllocation
 );
 
 // GET /api/budget-allocations/summary - Get budget allocation summary
 router.get('/summary', 
-  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee']),
+  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee',"Enterprise(CEO, CFO, etc.)"]),
   budgetAllocationController.getBudgetAllocationSummary
 );
 
 // GET /api/budget-allocations/export - Export budget allocation data
 router.get('/export', 
-  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee']),
+  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee',"Enterprise(CEO, CFO, etc.)"]),
   budgetAllocationController.exportBudgetAllocation
 );
 
 // POST /api/budget-allocations/auto-distribute - Auto-distribute budget
 router.post('/auto-distribute', 
-  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee']),
+  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee',"Enterprise(CEO, CFO, etc.)"]),
   budgetAllocationController.autoDistributeBudget
 );
 
 // GET /api/budget-allocations/:id - Get budget allocation by ID
 router.get('/:id', 
-  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee']),
+  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee',"Enterprise(CEO, CFO, etc.)"]),
   budgetAllocationController.getBudgetAllocationById
 );
 
 // POST /api/budget-allocations - Create new budget allocation
 router.post('/', 
-  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee']),
+  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee',"Enterprise(CEO, CFO, etc.)"]),
   validateBudgetAllocation,
   validateDepartmentAllocation,
   budgetAllocationController.createBudgetAllocation
@@ -118,7 +118,7 @@ router.put('/:id',
 
 // DELETE /api/budget-allocations/:id - Delete budget allocation
 router.delete('/:id', 
-   protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee']),
+   protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee',"Enterprise(CEO, CFO, etc.)"]),
   budgetAllocationController.deleteBudgetAllocation
 );
 
@@ -130,19 +130,19 @@ router.post('/:id/submit',
 
 // POST /api/budget-allocations/:id/approve - Approve budget allocation
 router.post('/:id/approve', 
-   protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee']),
+   protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee',"Enterprise(CEO, CFO, etc.)"]),
   budgetAllocationController.approveBudgetAllocation
 );
 
 // POST /api/budget-allocations/:id/reject - Reject budget allocation
 router.post('/:id/reject', 
-  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee']),
+  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee',"Enterprise(CEO, CFO, etc.)"]),
   budgetAllocationController.rejectBudgetAllocation
 );
 
 // GET /api/budget-allocations/department/:departmentId/history - Get department allocation history
 router.get('/department/:departmentId/history', 
-  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee']),
+  protect(['Admin', 'Executive (CEO, CFO, etc.)', 'Budget Manager', 'Department Head', 'Employee',"Enterprise(CEO, CFO, etc.)"]),
   budgetAllocationController.getDepartmentAllocationHistory
 );
 

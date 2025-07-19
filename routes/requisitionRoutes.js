@@ -21,7 +21,7 @@ router.post("/", protect(["employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance","Sales/Marketing"]), createRequisition);
+        "Accounting/Finance","Sales/Marketing","Enterprise(CEO, CFO, etc.)"]), createRequisition);
 
 // Employee: Get my requisitions
 router.get("/my", protect(["Sales/Marketing"]), getMyRequisitions);
@@ -31,58 +31,58 @@ router.get("/", protect(["procurement_officer", "admin","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getAllRequisitions);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getAllRequisitions);
 
 // Procurement/Admin: Approve requisition
 router.put("/:id/approve", protect(["procurement_officer", "admin","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), approveRequisition);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), approveRequisition);
 
 // Procurement/Admin: Reject requisition
 router.put("/:id/reject", protect(["procurement_officer", "admin","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), rejectRequisition);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), rejectRequisition);
 
 router.get("/approved", protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getApprovedRequisitions);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getApprovedRequisitions);
 router.get("/rejected", protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getRejectedRequisitions);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getRejectedRequisitions);
 router.get("/pending", protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getPendingRequisitions);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getPendingRequisitions);
 
 router.get("/pendings", protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getAllPendingRequisitions);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getAllPendingRequisitions);
 router.get("/stats", protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getRequisitionStats);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getRequisitionStats);
 
 router.get("/pending", protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getPendingRequisitions);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getPendingRequisitions);
 router.post("/travel", protect(["employee", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelRequisition);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelRequisition);
 
 module.exports = router;

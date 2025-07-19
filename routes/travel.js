@@ -10,118 +10,118 @@ router.post( '/', protect(["employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance","Sales/Marketing"]), travelController.travelRequest);
+        "Accounting/Finance","Sales/Marketing","Enterprise(CEO, CFO, etc.)"]), travelController.travelRequest);
 
 router.get("/analytics", protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.getTravelExpenseAnalytics);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getTravelExpenseAnalytics);
 // Detailed breakdown endpoint
 router.get("/breakdown", protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.getTravelExpenseBreakdown);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getTravelExpenseBreakdown);
 
 // Export endpoint for CSV/JSON data
 router.get("/export", protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.exportTravelExpenseData);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.exportTravelExpenseData);
 
 router.get('/employee/processed',protect(["employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance","Sales/Marketing"]), travelController.getEmployeeProcessedRequests);
+        "Accounting/Finance","Sales/Marketing","Enterprise(CEO, CFO, etc.)"]), travelController.getEmployeeProcessedRequests);
 
 // Approval Routes
 router.put( '/:id/supervisor-approval', protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.supervisorApproval);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.supervisorApproval);
 
 
 router.put('/:id/final-approval',protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]),travelController.finalApproval);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]),travelController.finalApproval);
 
 // Fetching Routes     
 router.get( '/pending/recon', protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.getPendingReconciliation);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getPendingReconciliation);
 router.get( '/approved/recon', protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.getApprovedReconciliation);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getApprovedReconciliation);
 router.get( '/pending', protect(["employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.getPendingRequests);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getPendingRequests);
 router.get( '/pending/all', protect(["employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.getPendingRequestsAll);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getPendingRequestsAll);
 router.get( '/pending/stats', protect(["employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.getPendingApprovalsStats);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getPendingApprovalsStats);
 router.get('/supervisor-approved', protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.getSupervisorApprovedRequests);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getSupervisorApprovedRequests);
 router.get('/finance/pending', protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance","Sales/Marketing"]), travelController.getFinancePendingRequests);
+        "Accounting/Finance","Sales/Marketing","Enterprise(CEO, CFO, etc.)"]), travelController.getFinancePendingRequests);
 router.get('/finance/processed', protect(["admin","employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance","Sales/Marketing"]), travelController.getFinanceProcessedRequestsUser);
+        "Accounting/Finance","Sales/Marketing","Enterprise(CEO, CFO, etc.)"]), travelController.getFinanceProcessedRequestsUser);
 router.get('/employee/:employeeId/reconcile-pending', protect, travelController.getReconcilePendingRequests);
 
 router.put( '/:id/expenses', protect(["employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.saveExpense);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.saveExpense);
 router.put('/:id/assign-driver',protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]),travelController.assignDriver);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]),travelController.assignDriver);
 router.post('/:id/reconcile', protect(["admin","employee","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]),travelController.submitReconciliation);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]),travelController.submitReconciliation);
 
 router.post('/:id/send-notifications', protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.sendTravelNotifications);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.sendTravelNotifications);
 
 // Finance Routes
 router.put('/:id/finance-process', protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.financeProcess);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.financeProcess);
 
 // Travel Execution Routes
 router.put('/:id/complete-travel', protect, travelController.completeTravel);
@@ -129,7 +129,7 @@ router.put( '/:id/process-reconciliation',  protect(["admin","procurement_office
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.processReconciliation);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.processReconciliation);
 
 // Reconciliation Routes
 router.post(
@@ -148,7 +148,7 @@ router.get('/:id', protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), travelController.getTravelRequestById);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getTravelRequestById);
 
 router.post(
   '/:id/reconcile-expenses',

@@ -76,7 +76,9 @@ const invoiceRoutes = require("./routes/invoiceRoutes");
 const travelRequestRoutes = require("./routes/travel");
 const departmentsRoutes = require("./routes/departmentRoutes");
 const driverRoutes = require("./routes/driverRoutes");
-const invitationRoutes = require("./routes/invitationRoutes");
+
+// Import new budget allocation routes
+const budgetRoutes = require("./routes/budgetRoutes");
 
 // Existing routes
 app.use("/api/auth", authRoutes);
@@ -89,7 +91,52 @@ app.use('/api/purchase-orders', purchaseOrderRoutes);
 app.use("/api/travel-requests", travelRequestRoutes);
 app.use("/api/departments", departmentsRoutes);
 app.use("/api/drivers", driverRoutes);
-app.use("/api/invitations", invitationRoutes);
+
+// New budget allocation routes
+app.use("/api/budget-allocations", budgetRoutes);
+
+// ===== BUDGET-SPECIFIC API ENDPOINTS =====
+
+// Get budget overview for dashboard
+app.get('/api/budget/overview', async (req, res) => {
+  try {
+    const BudgetAllocation = require('./models/budget');
+    const Department = require('./models/departments');
+    
+    // Get current budget allocation
+    const currentAllocation = await BudgetAllocation.getCurrentAllocation();
+    
+    // Get department stats
+    const totalDepartments = await Department.countDocuments({ status: 'active' });
+    const totalBudget = await Department.aggregate([
+      { $match: { status: 'active' } },
+      { $group: { _id: null, total: { $sum: '$budget' } } }
+    ]);
+    
+    const overview = {
+      currentPeriod: currentAllocation ? currentAllocation.budgetPeriod : null,
+      totalBudget: currentAllocation ? currentAllocation.totalBudget : (totalBudget[0]?.total || 0),
+      totalAllocated: currentAllocation ? currentAllocation.totalAllocated : 0,
+      remainingBudget: currentAllocation ? currentAllocation.remainingBudget : 0,
+      allocationEfficiency: currentAllocation ? currentAllocation.allocationEfficiency : 0,
+      totalDepartments,
+      status: currentAllocation ? currentAllocation.status : 'no_allocation',
+      lastUpdated: currentAllocation ? currentAllocation.updatedAt : null
+    };
+
+    res.json({
+      success: true,
+      data: overview
+    });
+  } catch (error) {
+    console.error('Error fetching budget overview:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch budget overview',
+      error: error.message
+    });
+  }
+});
 
 // ===== NEW LOCATION SERVICE CONTROL ENDPOINTS =====
 

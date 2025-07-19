@@ -310,7 +310,7 @@ const UserSchema = new mongoose.Schema({
     required: true,
     enum: [
       'IT/Technical', 'Executive (CEO, CFO, etc.)', 'Management', 'Sales/Marketing','Driver', 
-      'Operations', 'Human Resources', 'Accounting/Finance', 'Other', 'user','employee','Vendor'
+      'Operations', 'Human Resources', 'Accounting/Finance', 'Other', 'user','employee','Vendor',"Enterprise(CEO, CFO, etc.)"
     ],
     default: 'employee'
   },
@@ -432,6 +432,50 @@ const UserSchema = new mongoose.Schema({
     default: null
   },
 
+
+  billing: {
+     trialStartDate: {
+      type: Date,
+      default: null
+    },
+     trialEndDate: {
+      type: Date,
+      default: null
+    },
+    subscription: {
+         plan: {
+        type: String,
+        enum: ['trial', 'starter', 'professional', 'enterprise'],
+        default: 'trial'
+      },
+      status: {
+        type: String,
+        enum: ['active', 'past_due', 'unpaid', 'canceled', 'incomplete', 'incomplete_expired', 'trialing'],
+        default: 'trialing'
+      },
+      currentPeriodStart: Date,
+      currentPeriodEnd: Date,
+      cancelAtPeriodEnd: Boolean,
+      subscriptionId: String, 
+      priceId: String
+    },
+
+
+  },
+  usage: {
+     apiCalls: {
+      count: { type: Number, default: 0 },
+      lastReset: Date
+    },
+    storage: {
+      used: { type: Number, default: 0 }, // in MB
+      limit: { type: Number, default: 100 } // Default 100MB for trial
+    }
+    
+  },
+
+
+
   // Payment Methods
   paymentMethods: [{
     id: {
@@ -480,7 +524,18 @@ const UserSchema = new mongoose.Schema({
       default: Date.now
     }
   }],
+
+  invoices: [{
+      id: String,
+      amount: Number,
+      currency: String,
+      status: String,
+      pdfUrl: String,
+      createdAt: Date
+    }]
 });
+
+
 
 // Indexes for efficient querying
 UserSchema.index({ registrationToken: 1 });
@@ -734,6 +789,25 @@ UserSchema.statics.findActiveDriversWithLocation = function(minutesBack = 30) {
   });
 };
 
+// Add method to check trial status
+UserSchema.methods.isOnTrial = function() {
+  return this.billing.subscription.plan === 'trial' && 
+         this.billing.trialEndDate > new Date();
+};
+
+// Add method to check if trial has expired
+UserSchema.methods.hasTrialExpired = function() {
+  return this.billing.subscription.plan === 'trial' && 
+         this.billing.trialEndDate <= new Date();
+};
+
+// Add method to get remaining trial days
+UserSchema.methods.getRemainingTrialDays = function() {
+  if (!this.isOnTrial()) return 0;
+  const diffTime = this.billing.trialEndDate - new Date();
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+};
+
 // NEW: Static method to find moving drivers
 UserSchema.statics.findMovingDrivers = function(minSpeed = 5, minutesBack = 10) {
   const cutoffTime = new Date(Date.now() - (minutesBack * 60 * 1000));
@@ -758,6 +832,8 @@ const migrateUsers = async () => {
     }
   }
 };
+
+
 
 // Password reset functionality (keep existing)
 exports.requestPasswordReset = async (req, res) => {

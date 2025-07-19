@@ -19,42 +19,42 @@ router.get("/stats", protect(["admin", "procurement_officer","vendor","IT/Techni
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getInvoiceStats);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getInvoiceStats);
 
 // Approve invoice (Admin Only)
 router.post("/:id/approve", protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), approveInvoice);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), approveInvoice);
 
 // Reject invoice (Admin Only)
 router.post("/:id/reject", protect(["admin","procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), rejectInvoice);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), rejectInvoice);
 
 // Mark invoice as paid (Finance Team)
 router.post("/:id/status/pay", protect(["finance", "admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), markAsPaid);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), markAsPaid);
 
 // Get all invoices
 router.get("/", protect(["procurement_officer", "admin", "finance","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getAllInvoices);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getAllInvoices);
 
 // Get single invoice
 router.get("/:id", protect(["procurement_officer", "admin", "finance", "vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getInvoiceById);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getInvoiceById);
 
 
 

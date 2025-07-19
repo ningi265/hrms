@@ -1083,96 +1083,125 @@ exports.sendEmailVerificationTest = async (req, res) => {
 
 // Register User (updated version)
 exports.register = async (req, res) => {
-    try {
-        console.log("Incoming Register Request:", req.body);
+  try {
+    console.log("Incoming Register Request:", req.body);
 
-        const { 
-            firstName, 
-            lastName, 
-            email, 
-            password, 
-            companyName, 
-            industry, 
-            role, 
-            phoneNumber 
-        } = req.body;
+    const {
+      firstName,
+      lastName,
+      email,
+      password,
+      companyName,
+      industry,
+      role,
+      phoneNumber
+    } = req.body;
 
-        // Validate required fields
-        if (!firstName || !lastName || !email || !password || !companyName || !industry || !role || !phoneNumber) {
-            console.log("Missing required fields");
-            return res.status(400).json({ 
-                message: "All fields are required",
-                requiredFields: [
-                    'firstName', 
-                    'lastName', 
-                    'email', 
-                    'password', 
-                    'companyName', 
-                    'industry', 
-                    'role', 
-                    'phoneNumber'
-                ]
-            });
-        }
-
-        // Validate email format
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-            return res.status(400).json({ message: "Invalid email format" });
-        }
-
-        // Validate phone number format (basic validation)
-        if (!/^\+?\d{10,15}$/.test(phoneNumber)) {
-            return res.status(400).json({ message: "Invalid phone number format" });
-        }
-
-        // Check if user already exists
-        const existingUser = await User.findOne({ email });
-        if (existingUser) {
-            return res.status(400).json({ message: "User already exists" });
-        }
-
-        // Create new user (without verification status)
-        const newUser = await User.create({ 
-            firstName,
-            lastName,
-            email,
-            password,
-            companyName,
-            industry,
-            role,
-            phoneNumber,
-            isVerified: false, // Phone verification
-            isEmailVerified: false, // Email verification
-            verificationCode: null, // Will be set when SMS is sent
-            emailVerificationCode: null // Will be set when email is sent
-        });
-
-        await newUser.save();
-
-       const token = generateToken(newUser);
-
-        console.log('User role:', newUser.role);
-        console.log('Token payload:', { userId: newUser._id, email: newUser.email, isVerified: newUser.isVerified, role: newUser.role || 'user' });
-
-        // Don't log the full user object for security
-        console.log("New user created:", { id: newUser._id, email: newUser.email });
-
-        // Respond without token since user isn't verified yet
-        res.status(201).json({ 
-            message: "Registration successful. Verification codes will be sent to your phone and email.",
-            user: {
-              id: newUser._id,
-              email: newUser.email
-            },
-            token,
-            nextStep: "verify_email" // Tell frontend to show verification page
-        });
-
-    } catch (err) {
-        console.error("Error during registration:", err);
-        res.status(500).json({ message: "Server error", error: err.message });
+    // Validate required fields
+    if (!firstName || !lastName || !email || !password || !companyName || !industry || !role || !phoneNumber) {
+      console.log("Missing required fields");
+      return res.status(400).json({
+        message: "All fields are required",
+        requiredFields: [
+          'firstName',
+          'lastName',
+          'email',
+          'password',
+          'companyName',
+          'industry',
+          'role',
+          'phoneNumber'
+        ]
+      });
     }
+
+    // Validate email format
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ message: "Invalid email format" });
+    }
+
+    // Validate phone number format (basic validation)
+    if (!/^\+?\d{10,15}$/.test(phoneNumber)) {
+      return res.status(400).json({ message: "Invalid phone number format" });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: "User already exists" });
+    }
+
+    // Calculate trial dates
+    const now = new Date();
+    const trialEnd = new Date(now);
+    trialEnd.setDate(now.getDate() + 14); // 14-day trial
+
+    // Create new user with billing info
+    const newUser = await User.create({
+      firstName,
+      lastName,
+      email,
+      password,
+      companyName,
+      industry,
+      role,
+      phoneNumber,
+      isVerified: false,
+      isEmailVerified: false,
+      verificationCode: null,
+      emailVerificationCode: null,
+      billing: {
+        subscription: {
+          plan: 'trial',
+          status: 'trialing'
+        },
+        trialStartDate: now,
+        trialEndDate: trialEnd
+      }
+    });
+
+    await newUser.save();
+
+    const token = generateToken(newUser);
+
+    console.log('User role:', newUser.role);
+    console.log('Token payload:', {
+      userId: newUser._id,
+      email: newUser.email,
+      isVerified: newUser.isVerified,
+      role: newUser.role || 'user'
+    });
+
+    console.log("New user created:", { id: newUser._id, email: newUser.email });
+
+    // Respond with full user including billing
+    const normalizedUser = {
+      ...newUser.toObject(),
+      billing: {
+        subscription: {
+          plan: 'trial',
+          status: 'trialing',
+          ...(newUser.billing?.subscription || {})
+        },
+        trialStartDate: newUser.billing?.trialStartDate ?? now,
+        trialEndDate: newUser.billing?.trialEndDate ?? trialEnd,
+        ...newUser.billing
+      }
+    };
+
+    res.status(201).json({
+      message: "Registration successful. Verification codes will be sent to your phone and email.",
+      user: normalizedUser,
+      token,
+      nextStep: "verify_email"
+    });
+
+  } catch (err) {
+    console.error("Error during registration:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
 };
+
 
 // authController.js - Enhanced login with debugging
 exports.login = async (req, res) => {

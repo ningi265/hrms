@@ -17,14 +17,14 @@ router.post("/", protect(["procurement_officer", "admin","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), createRFQ);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), createRFQ);
 
 // Get all RFQs (Procurement Officers & Admins)
 router.get("/", protect(["procurement_officer", "admin", "Vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getAllRFQs);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getAllRFQs);
 
 // Vendor submits a quote
 router.post("/:id/quote", protect(["Vendor", "admin"]), submitQuote);
@@ -34,18 +34,18 @@ router.put("/:id/select", protect(["procurement_officer", "admin","IT/Technical"
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), selectVendor);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), selectVendor);
 
 router.get("/stats",  protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), getRFQStats);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getRFQStats);
 
 router.get("/:id", protect(["admin", "procurement_officer", "vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]),getRFQById);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]),getRFQById);
 
 module.exports = router;

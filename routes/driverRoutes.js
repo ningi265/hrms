@@ -17,7 +17,7 @@ const authorizedRoles = [
   "Accounting/Finance",
   "Other",
   "vendor",
-  "Driver"
+  "Driver","Enterprise(CEO, CFO, etc.)"
 ];
 
 // Fleet management routes
@@ -33,7 +33,7 @@ router.get('/', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver"
+   "Driver","Enterprise(CEO, CFO, etc.)"
 ]), driverController.getAllDrivers);
 
 router.post('/:id/location', protect([
@@ -48,7 +48,7 @@ router.post('/:id/location', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver"
+   "Driver","Enterprise(CEO, CFO, etc.)"
 ]), driverController.driverLoc);
 
 
@@ -65,7 +65,7 @@ router.get('/statistics', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-    "Driver"
+    "Driver","Enterprise(CEO, CFO, etc.)"
 ]), driverController.getFleetStatistics);
 
 router.get('/locations', protect(authorizedRoles), driverController.getDriverLocations);
@@ -81,7 +81,7 @@ router.get('/:driverId', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver"
+   "Driver","Enterprise(CEO, CFO, etc.)"
 ]), driverController.getDriverById);
 router.post('/drivers/:driverId/location', protect([
   "procurement_officer", 
@@ -95,7 +95,7 @@ router.post('/drivers/:driverId/location', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver"
+   "Driver","Enterprise(CEO, CFO, etc.)"
 ]), driverController.updateDriverLocation);
 router.patch('/:driverId/status',protect([
   "procurement_officer", 
@@ -109,7 +109,7 @@ router.patch('/:driverId/status',protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver"
+   "Driver","Enterprise(CEO, CFO, etc.)"
 ]), driverController.updateDriverStatus);
 
 router.get('/statistics', protect([
@@ -124,7 +124,7 @@ router.get('/statistics', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-    "Driver"
+    "Driver","Enterprise(CEO, CFO, etc.)"
 ]), driverController.getFleetStatistics);
 router.get('/assignments', protect([
   "procurement_officer", 
@@ -138,7 +138,7 @@ router.get('/assignments', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver"
+   "Driver","Enterprise(CEO, CFO, etc.)"
 ]), driverController.getRecentAssignments);
 router.post('/assignments', protect([
   "procurement_officer", 
@@ -152,7 +152,7 @@ router.post('/assignments', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver"
+   "Driver","Enterprise(CEO, CFO, etc.)"
 ]), driverController.createAssignment);
 router.patch('/assignments/:assignmentId', protect([
   "procurement_officer", 
@@ -166,7 +166,7 @@ router.patch('/assignments/:assignmentId', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-  "Driver"
+  "Driver","Enterprise(CEO, CFO, etc.)"
 ]), driverController.updateAssignment);
 
 router.post('/:driverId/fetch-live-location', driverController.fetchLiveLocation);

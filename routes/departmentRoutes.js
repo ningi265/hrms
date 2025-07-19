@@ -26,14 +26,14 @@ router.get('/stats',  protect([
   "IT/Technical",
   "Executive (CEO, CFO, etc.)",
   "Management",
-  "Human Resources",
+  "Human Resources","Enterprise(CEO, CFO, etc.)"
 ]), getDepartmentStats);
 router.get('/export',protect([ 
   "admin", 
   "IT/Technical",
   "Executive (CEO, CFO, etc.)",
   "Management",
-  "Human Resources",
+  "Human Resources","Enterprise(CEO, CFO, etc.)"
 ]), exportDepartments);
 router.get('/search', searchDepartments);
 
@@ -45,7 +45,7 @@ router.route('/')
   "IT/Technical",
   "Executive (CEO, CFO, etc.)",
   "Management",
-  "Human Resources",
+  "Human Resources","Enterprise(CEO, CFO, etc.)"
 ]), createDepartment);
 
 // Bulk operations
@@ -54,7 +54,7 @@ router.put('/bulk-update', protect([
   "IT/Technical",
   "Executive (CEO, CFO, etc.)",
   "Management",
-  "Human Resources",
+  "Human Resources","Enterprise(CEO, CFO, etc.)"
 ]), bulkUpdateDepartments);
 
 // Individual department operations
@@ -65,14 +65,14 @@ router.route('/:id')
   "IT/Technical",
   "Executive (CEO, CFO, etc.)",
   "Management",
-  "Human Resources",
+  "Human Resources","Enterprise(CEO, CFO, etc.)"
 ]), updateDepartment)
   .delete(protect([ 
   "admin", 
   "IT/Technical",
   "Executive (CEO, CFO, etc.)",
   "Management",
-  "Human Resources",
+  "Human Resources","Enterprise(CEO, CFO, etc.)"
 ]), deleteDepartment);
 
 // Department employees management
@@ -85,14 +85,14 @@ router.route('/:departmentId/employees/:employeeId')
   "IT/Technical",
   "Executive (CEO, CFO, etc.)",
   "Management",
-  "Human Resources",
+  "Human Resources","Enterprise(CEO, CFO, etc.)"
 ]), addEmployeeToDepartment)
   .delete(protect([ 
   "admin", 
   "IT/Technical",
   "Executive (CEO, CFO, etc.)",
   "Management",
-  "Human Resources",
+  "Human Resources","Enterprise(CEO, CFO, etc.)"
 ]), removeEmployeeFromDepartment);
 
 // Department performance management
@@ -103,7 +103,7 @@ router.route('/:id/performance')
   "IT/Technical",
   "Executive (CEO, CFO, etc.)",
   "Management",
-  "Human Resources",
+  "Human Resources","Enterprise(CEO, CFO, etc.)"
 ]), updateDepartmentPerformance);
 
 module.exports = router;
