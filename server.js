@@ -76,8 +76,7 @@ const invoiceRoutes = require("./routes/invoiceRoutes");
 const travelRequestRoutes = require("./routes/travel");
 const departmentsRoutes = require("./routes/departmentRoutes");
 const driverRoutes = require("./routes/driverRoutes");
-
-// Import new budget allocation routes
+const invitationRoutes = require("./routes/invitationRoutes");
 const budgetRoutes = require("./routes/budgetRoutes");
 
 // Existing routes
