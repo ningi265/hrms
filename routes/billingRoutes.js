@@ -4,46 +4,48 @@ const router = express.Router();
 const billingController = require('../api/controllers/billingController');
 const {protect} = require('../api/middleware/authMiddleware');
 
-// Get available plans
+// Define allowed roles for billing operations
+const billingRoles = [
+  "admin", 
+  "IT/Technical",
+  "Executive (CEO, CFO, etc.)",
+  "Management",
+  "Human Resources",
+  "Enterprise(CEO, CFO, etc.)"
+];
+
+// Public webhook endpoint (must be before other routes and without auth)
+router.post('/webhook', express.raw({type: 'application/json'}), billingController.handleWebhook);
+
+// Get available plans (public endpoint)
 router.get('/plans', billingController.getPlans);
 
-// Create checkout session
-router.post('/checkout', protect([ 
-  "admin", 
-  "IT/Technical",
-  "Executive (CEO, CFO, etc.)",
-  "Management",
-  "Human Resources","Enterprise(CEO, CFO, etc.)"
-]), billingController.createCheckoutSession);
+// Protected routes requiring specific roles
+router.get('/subscription', protect(billingRoles), billingController.getUserSubscription);
 
-// Get user subscription info
-router.get('/subscription', protect([ 
-  "admin", 
-  "IT/Technical",
-  "Executive (CEO, CFO, etc.)",
-  "Management",
-  "Human Resources","Enterprise(CEO, CFO, etc.)"
-]), billingController.getUserSubscription);
+// Checkout and subscription management
+router.post('/checkout', protect(billingRoles), billingController.createCheckoutSession);
+router.post('/create-checkout-session', protect(billingRoles), billingController.createCheckoutSession); // Alternative endpoint name
+router.get('/checkout-success', protect(billingRoles), billingController.handleCheckoutSuccess);
 
-// Cancel subscription
-router.post('/cancel', protect([ 
-  "admin", 
-  "IT/Technical",
-  "Executive (CEO, CFO, etc.)",
-  "Management",
-  "Human Resources","Enterprise(CEO, CFO, etc.)"
-]), billingController.cancelSubscription);
+// Subscription management
+router.post('/cancel', protect(billingRoles), billingController.cancelSubscription);
+router.post('/cancel-subscription', protect(billingRoles), billingController.cancelSubscription); // Alternative endpoint name
+router.post('/reactivate', protect(billingRoles), billingController.reactivateSubscription);
+router.post('/reactivate-subscription', protect(billingRoles), billingController.reactivateSubscription); // Alternative endpoint name
 
-// Reactivate subscription
-router.post('/reactivate', protect([ 
-  "admin", 
-  "IT/Technical",
-  "Executive (CEO, CFO, etc.)",
-  "Management",
-  "Human Resources","Enterprise(CEO, CFO, etc.)"
-]), billingController.reactivateSubscription);
+// Billing history and payment methods
+router.get('/history', protect(billingRoles), billingController.getBillingHistory);
+router.get('/billing-history', protect(billingRoles), billingController.getBillingHistory); // Alternative endpoint name
+router.post('/update-payment-method', protect(billingRoles), billingController.updatePaymentMethod);
 
-// Stripe webhook handler
-router.post('/webhook', express.raw({type: 'application/json'}), billingController.handleWebhook);
+// Usage tracking
+router.get('/usage', protect(billingRoles), (req, res) => {
+  // Return user usage data
+  res.json(req.user.usage || {
+    apiCalls: { count: 0, lastReset: new Date() },
+    storage: { used: 0, limit: 100 }
+  });
+});
 
 module.exports = router;

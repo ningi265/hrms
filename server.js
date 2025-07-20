@@ -78,6 +78,7 @@ const departmentsRoutes = require("./routes/departmentRoutes");
 const driverRoutes = require("./routes/driverRoutes");
 const invitationRoutes = require("./routes/invitationRoutes");
 const budgetRoutes = require("./routes/budgetRoutes");
+const billingRoutes = require("./routes/billingRoutes");
 
 // Existing routes
 app.use("/api/auth", authRoutes);
@@ -90,6 +91,8 @@ app.use('/api/purchase-orders', purchaseOrderRoutes);
 app.use("/api/travel-requests", travelRequestRoutes);
 app.use("/api/departments", departmentsRoutes);
 app.use("/api/drivers", driverRoutes);
+app.use("/api/invitations", invitationRoutes);
+app.use("/api/billing", billingRoutes);
 
 // New budget allocation routes
 app.use("/api/budget-allocations", budgetRoutes);
