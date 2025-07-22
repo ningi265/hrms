@@ -1608,12 +1608,9 @@ exports.updateEmployee = async (req, res) => {
 
 // Create new employee within an enterprise
 exports.createEmployee = async (req, res) => {
-  console.log("Incoming createEmployee request:", req.body);
-
   try {
+    // Verify the requesting user is an enterprise admin
     const requestingUser = await User.findById(req.user._id);
-
-    // Only allow users with Executive role
     if (requestingUser.role !== "Enterprise(CEO, CFO, etc.)") {
       return res.status(403).json({
         message: "Only executives (CEO, CFO, etc.) can create employees"
@@ -1642,46 +1639,50 @@ exports.createEmployee = async (req, res) => {
     if (!firstName || !lastName || !email || !phoneNumber || !position) {
       return res.status(400).json({
         message: "First name, last name, email, phone number and position are required",
-        requiredFields: ['firstName', 'lastName', 'email', 'phoneNumber', 'position']
+        requiredFields: [
+          'firstName',
+          'lastName',
+          'email',
+          'phoneNumber',
+          'position'
+        ]
       });
     }
 
-    // Check for duplicate email within the same company
+    // Check if employee with email already exists in this company
     const existingEmployee = await User.findOne({ 
       email,
       company: requestingUser.company 
     });
-
+    
     if (existingEmployee) {
       return res.status(400).json({ 
         message: "Employee with this email already exists in your company" 
       });
     }
 
-    // Validate department exists and belongs to the requesting user's company
+    // Validate department exists in this company
     let validDepartmentId = null;
-    const departmentToCheck = departmentId || department;
-
-    if (departmentToCheck) {
-      const departmentDoc = await Department.findOne({
-        _id: departmentToCheck,
-        company: requestingUser.company
-      });
-
+    if (department || departmentId) {
+      const departmentQuery = departmentId ? 
+        { _id: departmentId, company: requestingUser.company } : 
+        { name: department, company: requestingUser.company };
+      
+      const departmentDoc = await Department.findOne(departmentQuery);
+      
       if (!departmentDoc) {
-        return res.status(400).json({
-          message: "Department not found in your company"
+        return res.status(400).json({ 
+          message: "Department not found in your company" 
         });
       }
-
       validDepartmentId = departmentDoc._id;
     }
 
-    // Generate a registration token
+    // Generate registration token (48 hours)
     const registrationToken = crypto.randomBytes(32).toString('hex');
-    const registrationTokenExpires = Date.now() + 48 * 60 * 60 * 1000; // 48 hours
+    const registrationTokenExpires = Date.now() + 48 * 60 * 60 * 1000;
 
-    // Create the new employee
+    // Create new employee (automatically assigned to same company as admin)
     const newEmployee = new User({
       firstName,
       lastName,
@@ -1699,7 +1700,7 @@ exports.createEmployee = async (req, res) => {
       employmentType: employmentType || 'full-time',
       workLocation: workLocation || 'office',
       manager: manager || null,
-      role: position, // Assuming role = position title
+      role: position,
       company: requestingUser.company,
       companyName: requestingUser.companyName,
       industry: requestingUser.industry,
@@ -1710,7 +1711,7 @@ exports.createEmployee = async (req, res) => {
 
     const savedEmployee = await newEmployee.save();
 
-    // Update department with new employee if department exists
+    // Update department employee count if department is assigned
     if (validDepartmentId) {
       await Department.findByIdAndUpdate(validDepartmentId, {
         $addToSet: { employees: savedEmployee._id },
@@ -1718,61 +1719,93 @@ exports.createEmployee = async (req, res) => {
       });
     }
 
-    // Generate the registration link
+    // Generate registration link
     const registrationLink = `${process.env.FRONTEND_URL}/complete-registration?token=${registrationToken}&email=${encodeURIComponent(email)}`;
-
-    // Compose and send email
-    const emailSubject = `Complete Your Registration - ${requestingUser.companyName}`;
-    const emailMessage = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #333;">Welcome to ${requestingUser.companyName}</h2>
-        <p>Dear ${firstName} ${lastName},</p>
-        <p>Your employee account has been created by ${requestingUser.firstName} ${requestingUser.lastName}.</p>
-        <p>Please complete your registration by clicking the link below:</p>
-        <div style="margin: 20px 0; text-align: center;">
-          <a href="${registrationLink}" style="display: inline-block; padding: 12px 24px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">Complete Registration</a>
+    
+    // Prepare SendGrid email
+    const msg = {
+      to: email,
+      from: {
+        name: requestingUser.companyName || 'NexusMWI',
+        email: 'noreply@nexusmwi.com' // Must be verified in SendGrid
+      },
+      subject: `Complete Your Registration - ${requestingUser.companyName}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 5px;">
+          <h2 style="color: #333;">Welcome to ${requestingUser.companyName}</h2>
+          <p>Dear ${firstName} ${lastName},</p>
+          <p>Your employee account has been created by ${requestingUser.firstName} ${requestingUser.lastName}.</p>
+          <p>Please complete your registration by clicking the button below:</p>
+          <div style="margin: 20px 0; text-align: center;">
+            <a href="${registrationLink}" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">Complete Registration</a>
+          </div>
+          <p style="font-size: 12px; color: #777;">Or copy and paste this link into your browser: ${registrationLink}</p>
+          <p><strong>Important:</strong> This link expires in 48 hours.</p>
+          <p>If you didn't expect this email, please contact your administrator.</p>
+          <p>Best regards,<br/>${requestingUser.companyName} Team</p>
         </div>
-        <p><strong>Important:</strong> This link expires in 48 hours.</p>
-        <p>If you didn't expect this email, please contact your administrator.</p>
-        <p>Best regards,<br/>${requestingUser.companyName} Team</p>
-      </div>
-    `;
+      `,
+      text: `Welcome to ${requestingUser.companyName}\n\nDear ${firstName} ${lastName},\n\nYour employee account has been created by ${requestingUser.firstName} ${requestingUser.lastName}.\n\nPlease complete your registration by visiting this link:\n${registrationLink}\n\nImportant: This link expires in 48 hours.\n\nIf you didn't expect this email, please contact your administrator.\n\nBest regards,\n${requestingUser.companyName} Team`
+    };
 
     try {
-      await sendEmailNotification(email, emailSubject, emailMessage);
-    } catch (emailError) {
-      console.error('Failed to send registration email:', emailError);
-    }
-
-    res.status(201).json({
-      message: 'Employee created successfully. Registration email sent.',
-      employee: {
-        id: savedEmployee._id,
-        firstName,
-        lastName,
-        email,
-        position,
-        status: 'pending'
+      // Send email via SendGrid API
+      await sgMail.send(msg);
+      console.log(`Registration email sent to ${email} via SendGrid`);
+      
+      res.status(201).json({
+        message: 'Employee created successfully. Registration email sent.',
+        employee: {
+          id: savedEmployee._id,
+          firstName,
+          lastName,
+          email,
+          position,
+          status: 'pending'
+        }
+      });
+      
+    } catch (sendGridError) {
+      console.error('SendGrid failed to send registration email:', sendGridError);
+      
+      // Clean up the created employee record if email fails
+      await User.findByIdAndDelete(savedEmployee._id);
+      
+      if (validDepartmentId) {
+        await Department.findByIdAndUpdate(validDepartmentId, {
+          $pull: { employees: savedEmployee._id },
+          $inc: { employeeCount: -1 }
+        });
       }
-    });
+      
+      res.status(500).json({
+        message: "Employee created but failed to send registration email",
+        error: sendGridError.message,
+        debug: {
+          sendGridError: {
+            code: sendGridError.code,
+            response: sendGridError.response
+          }
+        }
+      });
+    }
 
   } catch (error) {
     console.error('Error creating employee:', error);
-
+    
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
       return res.status(400).json({ 
         message: `An employee with this ${field} already exists` 
       });
     }
-
+    
     res.status(500).json({ 
       message: 'Server error while creating employee',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
-
 
 
 
