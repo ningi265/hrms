@@ -68,6 +68,7 @@ router.get("/pendings", protect(["admin", "procurement_officer","IT/Technical",
         "Management",
         "Human Resources",
         "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getAllPendingRequisitions);
+
 router.get("/stats", protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",

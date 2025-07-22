@@ -150,8 +150,8 @@ exports.createCheckoutSession = async (req, res) => {
       mode: 'subscription',
       allow_promotion_codes: true,
       billing_address_collection: 'required',
-      success_url: `${process.env.FRONTEND_URL}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/billing?canceled=true`,
+      success_url: `${process.env.FRONTEND_URL}/dashboard?payment=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL}/billing?payment=canceled`,
       client_reference_id: userId.toString(),
       metadata: {
         planName,
@@ -187,6 +187,12 @@ exports.createCheckoutSession = async (req, res) => {
         errorDetails = {
           hint: 'Make sure you are using a price ID (starts with "price_"), not a product ID (starts with "prod_")',
           providedId: req.body.priceId,
+          stripeError: error.message
+        };
+      } else if (error.param === 'subscription_data[trial_period_days]') {
+        errorMessage = 'Trial period configuration error';
+        errorDetails = {
+          hint: 'Trial period days must be 1 or greater, or omitted entirely',
           stripeError: error.message
         };
       }
@@ -280,84 +286,171 @@ function getApiCallLimitForPlan(planName) {
   return limits[planName] || 10000;
 }
 
-// Handle Stripe webhooks
+// Handle Stripe webhooks with comprehensive logging and error handling
 exports.handleWebhook = async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
 
+  console.log('📥 Webhook received at:', new Date().toISOString());
+  console.log('📋 Headers:', {
+    'content-type': req.headers['content-type'],
+    'stripe-signature': sig ? 'present' : 'missing'
+  });
+
   try {
+    // Verify webhook signature
     event = stripe.webhooks.constructEvent(
       req.body,
       sig,
       process.env.STRIPE_WEBHOOK_SECRET
     );
+    console.log('✅ Webhook signature verified - Event type:', event.type);
+    console.log('🆔 Event ID:', event.id);
   } catch (err) {
-    console.error('Webhook signature verification failed:', err.message);
+    console.error('❌ Webhook signature verification failed:', err.message);
+    console.error('🔍 Webhook secret configured:', !!process.env.STRIPE_WEBHOOK_SECRET);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  console.log('Received webhook event:', event.type);
-
   // Handle the event
-  switch (event.type) {
-    case 'checkout.session.completed':
-      const session = event.data.object;
-      await handleCheckoutSession(session);
-      break;
-    case 'invoice.payment_succeeded':
-      const invoice = event.data.object;
-      await handlePaymentSucceeded(invoice);
-      break;
-    case 'invoice.payment_failed':
-      const failedInvoice = event.data.object;
-      await handlePaymentFailed(failedInvoice);
-      break;
-    case 'customer.subscription.updated':
-      const updatedSubscription = event.data.object;
-      await handleSubscriptionUpdated(updatedSubscription);
-      break;
-    case 'customer.subscription.deleted':
-      const deletedSubscription = event.data.object;
-      await handleSubscriptionDeleted(deletedSubscription);
-      break;
-    default:
-      console.log(`Unhandled event type: ${event.type}`);
-  }
+  try {
+    switch (event.type) {
+      case 'checkout.session.completed':
+        console.log('🎉 Processing checkout session completed');
+        await handleCheckoutCompleted(event.data.object);
+        break;
+      case 'invoice.payment_succeeded':
+        console.log('💰 Processing payment succeeded');
+        await handlePaymentSucceeded(event.data.object);
+        break;
+      case 'invoice.payment_failed':
+        console.log('❌ Processing payment failed');
+        await handlePaymentFailed(event.data.object);
+        break;
+      case 'customer.subscription.updated':
+        console.log('🔄 Processing subscription updated');
+        await handleSubscriptionUpdated(event.data.object);
+        break;
+      case 'customer.subscription.deleted':
+        console.log('🗑️ Processing subscription deleted');
+        await handleSubscriptionDeleted(event.data.object);
+        break;
+      default:
+        console.log(`🔄 Unhandled event type: ${event.type}`);
+    }
 
-  res.json({ received: true });
+    console.log('✅ Webhook processed successfully');
+    res.json({ received: true, eventType: event.type });
+  } catch (error) {
+    console.error('❌ Error processing webhook:', error);
+    res.status(500).json({ 
+      error: 'Webhook processing failed',
+      eventType: event.type,
+      eventId: event.id 
+    });
+  }
 };
 
 // Helper functions for webhook handling
-async function handleCheckoutSession(session) {
+async function handleCheckoutCompleted(session) {
+  console.log('🎉 Processing checkout completion for session:', session.id);
+  
   try {
     const userId = session.client_reference_id;
-    const planName = session.metadata.planName;
+    const planName = session.metadata?.planName;
+    const billingCycle = session.metadata?.billingCycle;
     
+    console.log('📋 Session metadata:', {
+      userId,
+      planName,
+      billingCycle,
+      customerId: session.customer,
+      subscriptionId: session.subscription
+    });
+
     if (!userId || !planName) {
-      console.error('Missing required metadata in checkout session');
+      console.error('❌ Missing required metadata in checkout session');
       return;
     }
 
-    const subscription = await stripe.subscriptions.retrieve(session.subscription);
+    // Get full subscription details from Stripe
+    const subscription = await stripe.subscriptions.retrieve(session.subscription, {
+      expand: ['items.data.price.product']
+    });
     
-    await User.findByIdAndUpdate(userId, {
-      'billing.subscription': {
-        plan: planName,
-        status: subscription.status,
-        subscriptionId: subscription.id,
-        priceId: subscription.items.data[0].price.id,
-        currentPeriodStart: new Date(subscription.current_period_start * 1000),
-        currentPeriodEnd: new Date(subscription.current_period_end * 1000),
-        cancelAtPeriodEnd: subscription.cancel_at_period_end
-      },
-      'billing.stripeCustomerId': session.customer,
-      'usage.storage.limit': getStorageLimitForPlan(planName),
-      'usage.apiCallLimit': getApiCallLimitForPlan(planName)
+    console.log('📋 Subscription details:', {
+      id: subscription.id,
+      status: subscription.status,
+      currentPeriodStart: subscription.current_period_start,
+      currentPeriodEnd: subscription.current_period_end,
+      trialEnd: subscription.trial_end
     });
 
-    console.log(`Subscription created for user ${userId}: ${subscription.id}`);
+    // Safe date conversion function
+    const convertUnixToDate = (unixTimestamp) => {
+      if (!unixTimestamp || isNaN(unixTimestamp)) {
+        return null;
+      }
+      const date = new Date(unixTimestamp * 1000);
+      return isNaN(date.getTime()) ? null : date;
+    };
+
+    // Convert dates safely
+    const currentPeriodStart = convertUnixToDate(subscription.current_period_start);
+    const currentPeriodEnd = convertUnixToDate(subscription.current_period_end);
+    const trialEnd = convertUnixToDate(subscription.trial_end);
+
+    console.log('📅 Converted dates:', {
+      currentPeriodStart,
+      currentPeriodEnd,
+      trialEnd
+    });
+
+    // Build update object with safe date handling
+    const updateData = {
+      'billing.subscription.plan': planName,
+      'billing.subscription.status': subscription.status,
+      'billing.subscription.subscriptionId': subscription.id,
+      'billing.subscription.priceId': subscription.items.data[0].price.id,
+      'billing.subscription.cancelAtPeriodEnd': subscription.cancel_at_period_end || false,
+      'billing.stripeCustomerId': session.customer,
+      // Update usage limits based on plan
+      'usage.storage.limit': getStorageLimitForPlan(planName),
+      'usage.apiCallLimit': getApiCallLimitForPlan(planName)
+    };
+
+    // Only add dates if they're valid
+    if (currentPeriodStart) {
+      updateData['billing.subscription.currentPeriodStart'] = currentPeriodStart;
+    }
+    if (currentPeriodEnd) {
+      updateData['billing.subscription.currentPeriodEnd'] = currentPeriodEnd;
+    }
+    if (trialEnd) {
+      updateData['billing.trialEndDate'] = trialEnd;
+    }
+
+    console.log('💾 Update data being sent to database:', updateData);
+
+    const updatedUser = await User.findByIdAndUpdate(userId, updateData, { 
+      new: true,
+      select: 'billing usage firstName lastName email'
+    });
+
+    if (updatedUser) {
+      console.log('✅ User subscription activated:', {
+        userId,
+        userEmail: updatedUser.email,
+        plan: planName,
+        subscriptionId: subscription.id,
+        status: subscription.status
+      });
+    } else {
+      console.error('❌ User not found with ID:', userId);
+    }
   } catch (error) {
-    console.error('Error handling checkout session:', error);
+    console.error('❌ Error handling checkout completion:', error);
+    throw error; // Re-throw to trigger webhook retry
   }
 }
 
@@ -444,7 +537,7 @@ async function handleSubscriptionDeleted(subscription) {
 // Get current user's subscription
 exports.getUserSubscription = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id) // Changed from req.user._id to req.user.id
+    const user = await User.findById(req.user._id) // Changed from req.user._id to req.user.id
       .select('billing usage');
     
     if (!user) {
@@ -454,6 +547,7 @@ exports.getUserSubscription = async (req, res) => {
     // Calculate trial status
     const trialActive = user.isOnTrial();
     const trialDaysRemaining = user.getRemainingTrialDays();
+    
 
     res.json({
       subscription: user.billing?.subscription || {

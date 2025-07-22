@@ -100,6 +100,26 @@ const UserSchema = new mongoose.Schema({
     trim: true
   },
 
+
+  company: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'Company',
+  required: true
+},
+department: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Department',
+  },
+enterpriseRoles: [{
+  type: String,
+  enum: ['CEO', 'CFO', 'CTO', 'COO', 'Manager', 'Director', 'Executive'],
+  default: []
+}],
+isEnterpriseAdmin: {
+  type: Boolean,
+  default: false
+},
+
   // Skills and Qualifications
   skills: [{
     type: String,

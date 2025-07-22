@@ -1,5 +1,6 @@
 const User = require("../../models/user");
 const Department = require('../../models/departments');
+const Company = require("../../models/company");
 const jwt = require("jsonwebtoken");
 const twilio = require('twilio');
 const bcrypt = require('bcryptjs');
@@ -1081,7 +1082,7 @@ exports.sendEmailVerificationTest = async (req, res) => {
   }
 };
 
-// Register User (updated version)
+// Register endpoint for enterprise users
 exports.register = async (req, res) => {
   try {
     console.log("Incoming Register Request:", req.body);
@@ -1093,13 +1094,13 @@ exports.register = async (req, res) => {
       password,
       companyName,
       industry,
-      role,
-      phoneNumber
+      domain,
+      phoneNumber,
+      role
     } = req.body;
 
     // Validate required fields
-    if (!firstName || !lastName || !email || !password || !companyName || !industry || !role || !phoneNumber) {
-      console.log("Missing required fields");
+    if (!firstName || !lastName || !email || !password || !companyName || !industry || !phoneNumber || !role) {
       return res.status(400).json({
         message: "All fields are required",
         requiredFields: [
@@ -1109,8 +1110,8 @@ exports.register = async (req, res) => {
           'password',
           'companyName',
           'industry',
-          'role',
-          'phoneNumber'
+          'phoneNumber',
+          'role'
         ]
       });
     }
@@ -1120,7 +1121,7 @@ exports.register = async (req, res) => {
       return res.status(400).json({ message: "Invalid email format" });
     }
 
-    // Validate phone number format (basic validation)
+    // Validate phone number format
     if (!/^\+?\d{10,15}$/.test(phoneNumber)) {
       return res.status(400).json({ message: "Invalid phone number format" });
     }
@@ -1131,21 +1132,41 @@ exports.register = async (req, res) => {
       return res.status(400).json({ message: "User already exists" });
     }
 
+    // Check if company exists
+    let company = await Company.findOne({ 
+      $or: [
+        { name: companyName },
+        { domain }
+      ]
+    });
+
+    if (!company) {
+      // Create new company
+      company = await Company.create({
+        name: companyName,
+        industry,
+        domain: domain || companyName.toLowerCase().replace(/\s+/g, '-') + '.com'
+      });
+    }
+
     // Calculate trial dates
     const now = new Date();
     const trialEnd = new Date(now);
     trialEnd.setDate(now.getDate() + 14); // 14-day trial
 
-    // Create new user with billing info
+    // Create new user with enterprise admin privileges if first user for company
+    const isFirstUser = company.usersCount === 0;
     const newUser = await User.create({
       firstName,
       lastName,
       email,
       password,
+      phoneNumber,
+      company: company._id,
       companyName,
       industry,
       role,
-      phoneNumber,
+      isEnterpriseAdmin: isFirstUser,
       isVerified: false,
       isEmailVerified: false,
       verificationCode: null,
@@ -1160,45 +1181,48 @@ exports.register = async (req, res) => {
       }
     });
 
-    await newUser.save();
-
-    const token = generateToken(newUser);
-
-    console.log('User role:', newUser.role);
-    console.log('Token payload:', {
-      userId: newUser._id,
-      email: newUser.email,
-      isVerified: newUser.isVerified,
-      role: newUser.role || 'user'
+    // Update company with new user count
+    await Company.findByIdAndUpdate(company._id, {
+      $inc: { usersCount: 1 }
     });
 
-    console.log("New user created:", { id: newUser._id, email: newUser.email });
+    // Generate token
+    const token = generateToken(newUser);
 
-    // Respond with full user including billing
-    const normalizedUser = {
-      ...newUser.toObject(),
-      billing: {
-        subscription: {
-          plan: 'trial',
-          status: 'trialing',
-          ...(newUser.billing?.subscription || {})
-        },
-        trialStartDate: newUser.billing?.trialStartDate ?? now,
-        trialEndDate: newUser.billing?.trialEndDate ?? trialEnd,
-        ...newUser.billing
-      }
-    };
+   
 
+    // Respond with user data
     res.status(201).json({
-      message: "Registration successful. Verification codes will be sent to your phone and email.",
-      user: normalizedUser,
+      message: "Registration successful. Verification codes sent.",
+      user: {
+        id: newUser._id,
+        firstName,
+        lastName,
+        email,
+        company: company.name,
+        role: newUser.role,
+        isEnterpriseAdmin: newUser.isEnterpriseAdmin
+      },
       token,
       nextStep: "verify_email"
     });
 
   } catch (err) {
     console.error("Error during registration:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
+    
+    // Handle duplicate key errors
+    if (err.code === 11000) {
+      const field = Object.keys(err.keyPattern)[0];
+      return res.status(400).json({ 
+        message: `${field} already exists`,
+        field
+      });
+    }
+    
+    res.status(500).json({ 
+      message: "Server error during registration",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
 };
 
@@ -1437,9 +1461,17 @@ exports.updateEmployee = async (req, res) => {
   }
 };
 
-// Create new employee
+// Create new employee within an enterprise
 exports.createEmployee = async (req, res) => {
   try {
+    // Verify the requesting user is an enterprise admin
+    const requestingUser = await User.findById(req.user._id);
+    if (requestingUser.role !== "Enterprise(CEO, CFO, etc.)") {
+  return res.status(403).json({
+    message: "Only executives (CEO, CFO, etc.) can create employees"
+  });
+}
+
     const {
       firstName,
       lastName,
@@ -1451,7 +1483,6 @@ exports.createEmployee = async (req, res) => {
       position,
       hireDate,
       salary,
-      status,
       emergencyContact,
       skills,
       employmentType,
@@ -1459,37 +1490,54 @@ exports.createEmployee = async (req, res) => {
       manager
     } = req.body;
 
-    // Check if employee with email already exists
-    const existingEmployee = await User.findOne({ email });
+    // Validate required fields
+    if (!firstName || !lastName || !email || !phoneNumber || !position) {
+      return res.status(400).json({
+        message: "First name, last name, email, phone number and position are required",
+        requiredFields: [
+          'firstName',
+          'lastName',
+          'email',
+          'phoneNumber',
+          'position'
+        ]
+      });
+    }
+
+    // Check if employee with email already exists in this company
+    const existingEmployee = await User.findOne({ 
+      email,
+      company: requestingUser.company 
+    });
+    
     if (existingEmployee) {
-      return res.status(400).json({ message: 'Employee with this email already exists' });
+      return res.status(400).json({ 
+        message: "Employee with this email already exists in your company" 
+      });
     }
 
-    // Validate department exists if provided
+    // Validate department exists in this company
     let validDepartmentId = null;
-    if (department) {
-      const departmentDoc = await Department.findOne({ name: department });
-      if (departmentDoc) {
-        validDepartmentId = departmentDoc._id;
-      } else if (departmentId) {
-        const departmentById = await Department.findById(departmentId);
-        if (departmentById) {
-          validDepartmentId = departmentById._id;
-        }
+    if (department || departmentId) {
+      const departmentQuery = departmentId ? 
+        { _id: departmentId, company: requestingUser.company } : 
+        { name: department, company: requestingUser.company };
+      
+      const departmentDoc = await Department.findOne(departmentQuery);
+      
+      if (!departmentDoc) {
+        return res.status(400).json({ 
+          message: "Department not found in your company" 
+        });
       }
+      validDepartmentId = departmentDoc._id;
     }
 
-    // Generate registration token and expiration (48 hours instead of 24)
+    // Generate registration token (48 hours)
     const registrationToken = crypto.randomBytes(32).toString('hex');
-    const registrationTokenExpires = Date.now() + 48 * 60 * 60 * 1000; // 48 hours
+    const registrationTokenExpires = Date.now() + 48 * 60 * 60 * 1000;
 
-    console.log('\n=== CREATING EMPLOYEE ===');
-    console.log('📧 Email:', email);
-    console.log('🔑 Registration Token:', registrationToken);
-    console.log('⏰ Token Expires:', new Date(registrationTokenExpires).toISOString());
-    console.log('⏰ Current Time:', new Date().toISOString());
-    console.log('=========================\n');
-
+    // Create new employee (automatically assigned to same company as admin)
     const newEmployee = new User({
       firstName,
       lastName,
@@ -1499,27 +1547,24 @@ exports.createEmployee = async (req, res) => {
       department,
       departmentId: validDepartmentId,
       position,
-      hireDate: new Date(hireDate),
-      salary: parseFloat(salary),
-      status: status || 'pending',
+      hireDate: hireDate ? new Date(hireDate) : new Date(),
+      salary: salary ? parseFloat(salary) : null,
+      status: 'pending',
       emergencyContact: emergencyContact || {},
       skills: skills || [],
       employmentType: employmentType || 'full-time',
       workLocation: workLocation || 'office',
       manager: manager || null,
-      role: 'Sales/Marketing',
-      companyName: req.user?.companyName || 'Company',
-      industry: req.user?.industry || 'Technology',
+      role: position,
+      company: requestingUser.company,
+      companyName: requestingUser.companyName,
+      industry: requestingUser.industry,
       registrationStatus: 'pending',
       registrationToken,
       registrationTokenExpires
     });
 
     const savedEmployee = await newEmployee.save();
-    
-    console.log('✅ Employee saved with ID:', savedEmployee._id);
-    console.log('🔑 Saved token:', savedEmployee.registrationToken);
-    console.log('⏰ Saved expiration:', savedEmployee.registrationTokenExpires);
 
     // Update department employee count if department is assigned
     if (validDepartmentId) {
@@ -1532,60 +1577,57 @@ exports.createEmployee = async (req, res) => {
     // Generate registration link
     const registrationLink = `${process.env.FRONTEND_URL}/complete-registration?token=${registrationToken}&email=${encodeURIComponent(email)}`;
     
-    console.log('🔗 Registration Link:', registrationLink);
-
     // Send registration email
-     const emailSubject = `Complete Your Registration - ${process.env.EMAIL_FROM_NAME || 'Company'}`;
+    const emailSubject = `Complete Your Registration - ${requestingUser.companyName}`;
     const emailMessage = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #333;">Complete Your Registration</h2>
+        <h2 style="color: #333;">Welcome to ${requestingUser.companyName}</h2>
         <p>Dear ${firstName} ${lastName},</p>
-        <p>Welcome to ${process.env.EMAIL_FROM_NAME || 'our team'}!</p>
-        <p>Your employee account has been created. Please complete your registration by clicking the link below:</p>
+        <p>Your employee account has been created by ${requestingUser.firstName} ${requestingUser.lastName}.</p>
+        <p>Please complete your registration by clicking the link below:</p>
         <div style="margin: 20px 0; text-align: center;">
           <a href="${registrationLink}" style="display: inline-block; padding: 12px 24px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">Complete Registration</a>
         </div>
-        <p><strong>Important:</strong> This link will expire in 48 hours for security reasons.</p>
-        <p>If the button doesn't work, copy and paste this link into your browser:</p>
-        <p style="word-break: break-all; background-color: #f5f5f5; padding: 10px; border-radius: 5px;">
-          ${registrationLink}
-        </p>
-        <p>If you didn't expect this email or need assistance, please contact your HR department.</p>
-        <p>Best regards,<br/>${process.env.EMAIL_FROM_NAME || 'Company'} Team</p>
+        <p><strong>Important:</strong> This link expires in 48 hours.</p>
+        <p>If you didn't expect this email, please contact your administrator.</p>
+        <p>Best regards,<br/>${requestingUser.companyName} Team</p>
       </div>
     `;
+
     try {
       await sendEmailNotification(email, emailSubject, emailMessage);
-      console.log('✅ Registration email sent successfully');
     } catch (emailError) {
-      console.error('❌ Failed to send registration email:', emailError);
+      console.error('Failed to send registration email:', emailError);
     }
 
     res.status(201).json({
       message: 'Employee created successfully. Registration email sent.',
       employee: {
-        _id: savedEmployee._id,
+        id: savedEmployee._id,
         firstName,
         lastName,
         email,
+        position,
         status: 'pending'
-      },
-      debug: {
-        registrationToken,
-        registrationLink,
-        tokenExpires: new Date(registrationTokenExpires).toISOString()
       }
     });
+
   } catch (error) {
     console.error('Error creating employee:', error);
+    
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
-      return res.status(400).json({ message: `An employee with this ${field} already exists` });
+      return res.status(400).json({ 
+        message: `An employee with this ${field} already exists` 
+      });
     }
-    res.status(500).json({ message: 'Server error while creating employee' });
+    
+    res.status(500).json({ 
+      message: 'Server error while creating employee',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
-
 
 
 

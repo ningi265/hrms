@@ -1,7 +1,7 @@
 const Department = require('../../models/departments');
 const User = require('../../models/user'); 
 // Get all departments
-exports.getAllDepartments = async (req, res) => {
+exports.getAllDepartmentsAdmin = async (req, res) => {
   try {
     const departments = await Department.find()
       .populate('headEmployeeId', 'firstName lastName email phoneNumber')
@@ -14,6 +14,126 @@ exports.getAllDepartments = async (req, res) => {
   } catch (error) {
     console.error('Error fetching departments:', error);
     res.status(500).json({ message: 'Server error while fetching departments' });
+  }
+};
+
+exports.getAllDepartments = async (req, res) => {
+  try {
+    // Get the requesting user's company
+    console.log("Requesting user ID:", req.user._id);
+    const requestingUser = await User.findById(req.user._id).select('company isEnterpriseAdmin');
+    if (!requestingUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Base query - filter by company unless user is enterprise admin with special privileges
+    const baseQuery = requestingUser.isEnterpriseAdmin && req.query.allCompanies ? {} : { company: requestingUser.company };
+
+    // Get pagination parameters
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+
+    // Get sorting parameters
+    const sortField = req.query.sortBy || 'name';
+    const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
+    const sort = { [sortField]: sortOrder };
+
+    // Get departments with full details
+    const departments = await Department.find(baseQuery)
+      .populate({
+        path: 'headEmployeeId',
+        select: 'firstName lastName email phoneNumber position avatar',
+        populate: {
+          path: 'department',
+          select: 'name departmentCode'
+        }
+      })
+      .populate({
+        path: 'parentDepartment',
+        select: 'name departmentCode company',
+        populate: {
+          path: 'company',
+          select: 'name'
+        }
+      })
+      .populate({
+        path: 'subDepartments',
+        select: 'name departmentCode status employeeCount budget',
+        options: { sort: { name: 1 } }
+      })
+      .populate({
+        path: 'company',
+        select: 'name industry'
+      })
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    // Get total count for pagination
+    const totalCount = await Department.countDocuments(baseQuery);
+
+    // Get department statistics
+    const stats = await Department.aggregate([
+      { $match: baseQuery },
+      { 
+        $group: {
+          _id: null,
+          totalDepartments: { $sum: 1 },
+          activeDepartments: { 
+            $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] } 
+          },
+          inactiveDepartments: { 
+            $sum: { $cond: [{ $eq: ["$status", "inactive"] }, 1, 0] } 
+          },
+          totalBudget: { $sum: "$budget" },
+          avgEmployeeCount: { $avg: "$employeeCount" }
+        }
+      }
+    ]);
+
+    // Get department distribution by location
+    const locationDistribution = await Department.aggregate([
+      { $match: baseQuery },
+      { 
+        $group: {
+          _id: "$location",
+          count: { $sum: 1 },
+          totalBudget: { $sum: "$budget" }
+        }
+      },
+      { $sort: { count: -1 } }
+    ]);
+
+    console.log(`Fetched ${departments.length} departments for company ${requestingUser.company}`);
+
+    res.status(200).json({
+      success: true,
+      data: departments,
+      meta: {
+        total: totalCount,
+        page,
+        limit,
+        totalPages: Math.ceil(totalCount / limit),
+        sort: `${sortField}:${sortOrder === 1 ? 'asc' : 'desc'}`,
+        stats: stats[0] || {},
+        locationDistribution,
+        context: {
+          company: requestingUser.company,
+          isEnterpriseAdmin: requestingUser.isEnterpriseAdmin,
+          allCompanies: req.query.allCompanies ? true : false
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching departments:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error while fetching departments',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 
@@ -44,6 +164,12 @@ exports.getDepartmentById = async (req, res) => {
 // Create new department
 exports.createDepartment = async (req, res) => {
   try {
+    // Get the requesting user's company
+    const requestingUser = await User.findById(req.user._id).select('company isEnterpriseAdmin');
+    if (!requestingUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
     const {
       name,
       description,
@@ -58,73 +184,154 @@ exports.createDepartment = async (req, res) => {
       parentDepartment,
       maxCapacity,
       floor,
-      building
+      building,
+      departmentCode
     } = req.body;
 
-    // Check if department already exists
-    const existingDepartment = await Department.findOne({ 
-      name: { $regex: new RegExp(`^${name}$`, 'i') }
+    // Validate required fields
+    if (!name || !headEmail) {
+      return res.status(400).json({
+        message: "Department name and head email are required",
+        requiredFields: ['name', 'headEmail']
+      });
+    }
+
+    // Check if department already exists in this company
+    const existingDepartment = await Department.findOne({
+      name: { $regex: new RegExp(`^${name}$`, 'i') },
+      company: requestingUser.company
     });
+    
     if (existingDepartment) {
-      return res.status(400).json({ message: 'Department with this name already exists' });
+      return res.status(400).json({ 
+        message: 'Department with this name already exists in your company' 
+      });
     }
 
-    // Check if head email is already used by another department
-    const existingHeadEmail = await Department.findOne({ headEmail });
-    if (existingHeadEmail) {
-      return res.status(400).json({ message: 'This email is already assigned to another department head' });
-    }
-
-    // Try to find the employee who will be the department head
-    let headEmployeeId = null;
-    if (headEmail) {
-      const headEmployee = await User.findOne({ email: headEmail, role: 'Sales/Marketing' });
-      if (headEmployee) {
-        headEmployeeId = headEmployee._id;
+    // Check if department code is unique within company
+    if (departmentCode) {
+      const existingCode = await Department.findOne({
+        departmentCode,
+        company: requestingUser.company
+      });
+      if (existingCode) {
+        return res.status(400).json({ 
+          message: 'Department code must be unique within your company' 
+        });
       }
     }
 
+    // Verify head email belongs to an employee in the same company
+    const headEmployee = await User.findOne({ 
+      email: headEmail,
+      company: requestingUser.company,
+      role: { $in: ['Sales/Marketing', 'Management', 'Executive(CEO, CFO, etc.)','Enterprise(CEO, CFO, etc.)'] }
+    });
+    
+    if (!headEmployee) {
+      return res.status(400).json({ 
+        message: 'Head email must belong to an existing employee in your company with appropriate role' 
+      });
+    }
+
+    // Validate parent department belongs to same company
+    let validParentDepartment = null;
+    if (parentDepartment) {
+      const parentDept = await Department.findOne({
+        _id: parentDepartment,
+        company: requestingUser.company
+      });
+      if (!parentDept) {
+        return res.status(400).json({ 
+          message: 'Parent department not found in your company' 
+        });
+      }
+      validParentDepartment = parentDept._id;
+    }
+
+    // Create new department
     const newDepartment = new Department({
       name,
       description,
+      departmentCode: departmentCode || generateDepartmentCode(name),
       departmentHead,
       headEmail,
       headPhone,
-      headEmployeeId,
+      headEmployeeId: headEmployee._id,
       location,
       floor,
       building,
-      budget: parseFloat(budget),
+      budget: budget ? parseFloat(budget) : null,
       status: status || 'active',
       goals: goals || [],
-      establishedDate: new Date(establishedDate),
-      parentDepartment: parentDepartment || null,
+      establishedDate: establishedDate ? new Date(establishedDate) : new Date(),
+      parentDepartment: validParentDepartment,
       maxCapacity: maxCapacity ? parseInt(maxCapacity) : null,
+      company: requestingUser.company,
       createdBy: req.user._id,
       updatedBy: req.user._id
     });
 
     const savedDepartment = await newDepartment.save();
     
-    // Populate the response
-    const populatedDepartment = await Department.findById(savedDepartment._id)
-      .populate('headEmployeeId', 'firstName lastName email phoneNumber')
-      .populate('parentDepartment', 'name departmentCode');
+    // Update the head employee's department assignment
+    await User.findByIdAndUpdate(headEmployee._id, {
+      $addToSet: { departments: savedDepartment._id },
+      department: savedDepartment._id,
+      isDepartmentHead: true
+    });
 
-    console.log(`Created new department: ${name}`);
+    // Populate the response with detailed information
+    const populatedDepartment = await Department.findById(savedDepartment._id)
+      .populate({
+        path: 'headEmployeeId',
+        select: 'firstName lastName email phoneNumber position',
+        populate: {
+          path: 'department',
+          select: 'name'
+        }
+      })
+      .populate({
+        path: 'parentDepartment',
+        select: 'name departmentCode'
+      })
+      .populate({
+        path: 'company',
+        select: 'name industry'
+      });
+
+    console.log(`Created new department: ${name} in company ${requestingUser.company}`);
 
     res.status(201).json({
+      success: true,
       message: 'Department created successfully',
       department: populatedDepartment
     });
+
   } catch (error) {
     console.error('Error creating department:', error);
+    
     if (error.code === 11000) {
-      return res.status(400).json({ message: 'Department with this name or code already exists' });
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({ 
+        message: `Department with this ${field} already exists`,
+        field
+      });
     }
-    res.status(500).json({ message: 'Server error while creating department' });
+    
+    res.status(500).json({ 
+      message: 'Server error while creating department',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
+
+// Helper function to generate department code
+function generateDepartmentCode(name) {
+  const prefix = name.substring(0, 3).toUpperCase();
+  const randomNum = Math.floor(100 + Math.random() * 900);
+  return `${prefix}-${randomNum}`;
+}
 
 // Update department
 exports.updateDepartment = async (req, res) => {

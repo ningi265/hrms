@@ -7,7 +7,6 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
 
-
 // Load environment variables
 dotenv.config();
 
@@ -18,26 +17,30 @@ const server = http.createServer(app);
 // Socket.IO setup with CORS
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:3000" ,
+    origin: process.env.CLIENT_URL || "http://localhost:3000",
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     credentials: true
   }
 });
 
 // Import Location Service for live tracking
-const LocationService = require('./api/services/locationService'); // You'll need to create this
+const LocationService = require('./api/services/locationService');
 
 // Initialize location service
 let locationService = null;
 
-// Middleware
+// CRITICAL: Stripe webhook route MUST come BEFORE any JSON parsing middleware
+const billingController = require('./api/controllers/billingController');
+app.post('/api/billing/webhook', express.raw({type: 'application/json'}), billingController.handleWebhook);
+
+// NOW add the middleware that parses JSON (after webhook route)
 app.use(cors({
   origin: process.env.CLIENT_URL || "http://localhost:3000",
   credentials: true
 }));
 app.use(bodyParser.json()); 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use(express.json());
+app.use(express.json()); // This now comes AFTER the webhook route
 
 // Make io available to routes
 app.use((req, res, next) => {
@@ -79,6 +82,12 @@ const driverRoutes = require("./routes/driverRoutes");
 const invitationRoutes = require("./routes/invitationRoutes");
 const budgetRoutes = require("./routes/budgetRoutes");
 const billingRoutes = require("./routes/billingRoutes");
+// Initialize usage monitoring
+const { scheduleMonthlyReset } = require('./utils/usageUtils');
+const { scheduleUsageAlerts } = require('./api/services/usageAlertsService');
+
+scheduleUsageAlerts();
+scheduleMonthlyReset();
 
 // Existing routes
 app.use("/api/auth", authRoutes);
@@ -92,7 +101,7 @@ app.use("/api/travel-requests", travelRequestRoutes);
 app.use("/api/departments", departmentsRoutes);
 app.use("/api/drivers", driverRoutes);
 app.use("/api/invitations", invitationRoutes);
-app.use("/api/billing", billingRoutes);
+app.use("/api/billing", billingRoutes); // This still handles non-webhook billing routes
 
 // New budget allocation routes
 app.use("/api/budget-allocations", budgetRoutes);
@@ -259,8 +268,6 @@ app.post('/api/location-service/update-driver/:driverId', async (req, res) => {
     });
   }
 });
-
-
 
 // Enhanced Socket.IO connection handling for live location tracking
 io.on('connection', (socket) => {
@@ -647,6 +654,7 @@ server.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
   console.log(`WebSocket server is ready on port ${PORT}`);
   console.log(`Live location tracking is ${locationService ? 'enabled' : 'disabled'}`);
+  console.log(`Stripe webhook endpoint: /api/billing/webhook`);
 });
 
 // Export for testing purposes

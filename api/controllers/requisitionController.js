@@ -192,6 +192,176 @@ exports.getAllPendingRequisitions = async (req, res) => {
 };
 
 // Get requisition stats (total, pending, approved, rejected)
+
+{/*exports.getRequisitionStats = async (req, res) => {
+    try {
+        const total = await Requisition.countDocuments();
+        const pending = await Requisition.countDocuments({ status: "pending" });
+        const approved = await Requisition.countDocuments({ status: "approved" });
+        const rejected = await Requisition.countDocuments({ status: "rejected" });
+        const requisitions = await Requisition.find({ status: "pending" })
+            .populate("employee", "name email");
+
+        const stats = {
+            counts: {
+                total,
+                pending,
+                approved,
+                rejected
+            },
+            pendingRequisitions: requisitions // Include the full requisitions data
+        };
+
+        res.json(stats); // Send a single response with all data
+    } catch (err) {
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+}; */}
+exports.getRequisitionStats = async (req, res) => {
+    try {
+        // Get the requesting user's company
+        const user = await User.findById(req.user._id).select('company isEnterpriseAdmin');
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // Base query - filter by company unless user is enterprise admin with special privileges
+        const baseQuery = user.isEnterpriseAdmin && req.query.allCompanies ? {} : { company: user.company };
+
+        // Get counts by status
+        const [total, pending, approved, rejected, processing, completed] = await Promise.all([
+            Requisition.countDocuments(baseQuery),
+            Requisition.countDocuments({ ...baseQuery, status: "pending" }),
+            Requisition.countDocuments({ ...baseQuery, status: "approved" }),
+            Requisition.countDocuments({ ...baseQuery, status: "rejected" }),
+            Requisition.countDocuments({ ...baseQuery, status: "processing" }),
+            Requisition.countDocuments({ ...baseQuery, status: "completed" })
+        ]);
+
+        // Get pending requisitions with employee details
+        const pendingRequisitions = await Requisition.find({ ...baseQuery, status: "pending" })
+            .populate({
+                path: "employee",
+                select: "firstName lastName email department position",
+                populate: {
+                    path: "department",
+                    select: "name"
+                }
+            })
+            .sort({ createdAt: -1 })
+            .limit(10); // Limit to 10 most recent pending requisitions
+
+        // Get recent activity (last 30 days)
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        const recentActivity = await Requisition.aggregate([
+            { $match: { ...baseQuery, createdAt: { $gte: thirtyDaysAgo } } },
+            { $group: { 
+                _id: { 
+                    $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } 
+                },
+                count: { $sum: 1 },
+                approved: { 
+                    $sum: { $cond: [{ $eq: ["$status", "approved"] }, 1, 0] } 
+                },
+                rejected: { 
+                    $sum: { $cond: [{ $eq: ["$status", "rejected"] }, 1, 0] } 
+                }
+            }},
+            { $sort: { _id: 1 } },
+            { $project: { 
+                date: "$_id", 
+                count: 1, 
+                approved: 1, 
+                rejected: 1,
+                _id: 0 
+            }}
+        ]);
+
+        // Get department-wise breakdown
+        const departmentStats = await Requisition.aggregate([
+            { $match: baseQuery },
+            { $lookup: {
+                from: "users",
+                localField: "employee",
+                foreignField: "_id",
+                as: "employeeData"
+            }},
+            { $unwind: "$employeeData" },
+            { $group: {
+                _id: "$employeeData.department",
+                total: { $sum: 1 },
+                pending: { 
+                    $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } 
+                },
+                approved: { 
+                    $sum: { $cond: [{ $eq: ["$status", "approved"] }, 1, 0] } 
+                },
+                rejected: { 
+                    $sum: { $cond: [{ $eq: ["$status", "rejected"] }, 1, 0] } 
+                }
+            }},
+            { $lookup: {
+                from: "departments",
+                localField: "_id",
+                foreignField: "_id",
+                as: "departmentData"
+            }},
+            { $unwind: "$departmentData" },
+            { $project: {
+                department: "$departmentData.name",
+                total: 1,
+                pending: 1,
+                approved: 1,
+                rejected: 1,
+                approvalRate: {
+                    $cond: [
+                        { $eq: ["$total", 0] },
+                        0,
+                        { $divide: ["$approved", "$total"] }
+                    ]
+                }
+            }},
+            { $sort: { total: -1 } }
+        ]);
+
+        // Calculate approval rate
+        const approvalRate = total > 0 ? (approved / total) * 100 : 0;
+        const rejectionRate = total > 0 ? (rejected / total) * 100 : 0;
+
+        // Prepare response
+        const stats = {
+            summary: {
+                total,
+                pending,
+                approved,
+                rejected,
+                processing,
+                completed,
+                approvalRate: parseFloat(approvalRate.toFixed(2)),
+                rejectionRate: parseFloat(rejectionRate.toFixed(2)),
+                avgProcessingTime: "N/A" // Could be implemented with actual data
+            },
+            recentActivity,
+            departmentStats,
+            pendingRequisitions,
+            context: {
+                company: user.company,
+                isEnterpriseAdmin: user.isEnterpriseAdmin,
+                allCompanies: req.query.allCompanies ? true : false
+            }
+        };
+
+        res.json(stats);
+    } catch (err) {
+        console.error("Error in getRequisitionStats:", err);
+        res.status(500).json({ 
+            message: "Server error", 
+            error: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
+    }
+};
 exports.getRequisitionStats = async (req, res) => {
     try {
         const total = await Requisition.countDocuments();

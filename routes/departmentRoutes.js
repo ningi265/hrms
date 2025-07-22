@@ -28,6 +28,7 @@ router.get('/stats',  protect([
   "Management",
   "Human Resources","Enterprise(CEO, CFO, etc.)"
 ]), getDepartmentStats);
+
 router.get('/export',protect([ 
   "admin", 
   "IT/Technical",
@@ -35,11 +36,19 @@ router.get('/export',protect([
   "Management",
   "Human Resources","Enterprise(CEO, CFO, etc.)"
 ]), exportDepartments);
+
+
 router.get('/search', searchDepartments);
 
 // CRUD operations
 router.route('/')
-  .get(getAllDepartments)
+  .get(protect([ 
+  "admin", 
+  "IT/Technical",
+  "Executive (CEO, CFO, etc.)",
+  "Management",
+  "Human Resources","Enterprise(CEO, CFO, etc.)"
+]),getAllDepartments)
   .post(protect([ 
   "admin", 
   "IT/Technical",

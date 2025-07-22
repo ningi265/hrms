@@ -23,6 +23,11 @@ const DepartmentSchema = new mongoose.Schema({
     uppercase: true,
     index: true
   },
+   company: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Company',
+    required: true
+  },
 
   // Department Head Information
   departmentHead: {
