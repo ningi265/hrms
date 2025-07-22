@@ -1379,19 +1379,164 @@ exports.getDrivers = async (req, res) => {
     }
 };
 
+exports.getEmployeesAdmin = async (req, res) => {
+  try {
+  const employees = await User.find({
+    role: { $in: ['Sales/Marketing', 'IT/Technical', 'Operations', 'Driver', 'Accounting/Finance'] }
+  })
+    .populate('departmentId', 'name departmentCode')
+    .populate('manager', 'firstName lastName email')
+    .populate('directReports', 'firstName lastName email position')
+    .sort({ createdAt: -1 });
+
+  console.log(`Fetched ${employees.length} employees`);
+  res.status(200).json(employees);
+} catch (error) {
+  console.error('Error fetching employees:', error);
+  res.status(500).json({ message: 'Server error while fetching employees' });
+}
+};
+
 exports.getEmployees = async (req, res) => {
   try {
-    const employees = await User.find({ role: 'Sales/Marketing' })
-      .populate('departmentId', 'name departmentCode')
-      .populate('manager', 'firstName lastName email')
-      .populate('directReports', 'firstName lastName email position')
-      .sort({ createdAt: -1 });
+    // Check authentication and get user company
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({ 
+        success: false,
+        message: "Unauthorized: User not authenticated"
+      });
+    }
 
-    console.log(`Fetched ${employees.length} employees`);
-    res.status(200).json(employees);
+    // Get requesting user's company and admin status
+    const requestingUser = await User.findById(req.user._id)
+      .select('company isEnterpriseAdmin');
+    
+    if (!requestingUser) {
+      return res.status(404).json({ 
+        success: false,
+        message: "User not found" 
+      });
+    }
+    const allowedRoles = ['Sales/Marketing', 'IT/Technical', 'Operations', 'Driver', 'Accounting/Finance'];
+    // Base query - filter by company unless enterprise admin requests all
+   const baseQuery = requestingUser.role === 'Enterprise(CEO, CFO, etc.)' && req.query.allCompanies === 'true'
+  ? { role: { $in: allowedRoles } }
+  : { 
+      company: requestingUser.company,
+      role: { $in: allowedRoles }
+    };
+
+
+    // Pagination parameters
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+
+    // Sorting parameters
+    const sortField = req.query.sortBy || 'lastName';
+    const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
+    const sort = { [sortField]: sortOrder };
+
+    // Filter parameters
+    const statusFilter = req.query.status 
+      ? { status: req.query.status } 
+      : {};
+
+    // Search parameter
+    const searchQuery = req.query.search
+      ? {
+          $or: [
+            { firstName: { $regex: req.query.search, $options: 'i' } },
+            { lastName: { $regex: req.query.search, $options: 'i' } },
+            { email: { $regex: req.query.search, $options: 'i' } },
+            { employeeId: { $regex: req.query.search, $options: 'i' } }
+          ]
+        }
+      : {};
+
+    // Combine all query conditions
+    const query = {
+      ...baseQuery,
+      ...statusFilter,
+      ...searchQuery
+    };
+
+    // Get employees with pagination and sorting
+    const employees = await User.find(query)
+      .select('-password -verificationCode -refreshToken')
+      .populate({
+        path: 'departmentId',
+        select: 'name departmentCode',
+        match: { status: 'active' } // Only active departments
+      })
+      .populate({
+        path: 'manager',
+        select: 'firstName lastName email avatar position',
+        match: { status: 'active' } // Only active managers
+      })
+      .populate({
+        path: 'directReports',
+        select: 'firstName lastName email position status',
+        match: { status: 'active' } // Only active direct reports
+      })
+      .populate({
+        path: 'company',
+        select: 'name industry'
+      })
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    // Get total count for pagination
+    const totalCount = await User.countDocuments(query);
+
+    // Get status counts
+    const statusCounts = await User.aggregate([
+      { $match: baseQuery },
+      { $group: {
+          _id: '$status',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Convert status counts to object
+    const statusStats = statusCounts.reduce((acc, curr) => {
+      acc[curr._id] = curr.count;
+      return acc;
+    }, {});
+
+    console.log(`Fetched ${employees.length} employees from company ${requestingUser.company}`);
+
+    res.status(200).json({
+      success: true,
+      data: employees,
+      meta: {
+        total: totalCount,
+        page,
+        limit,
+        totalPages: Math.ceil(totalCount / limit),
+        statusStats,
+        sort: `${sortField}:${sortOrder === 1 ? 'asc' : 'desc'}`,
+        filters: {
+          search: req.query.search || null,
+          status: req.query.status || null
+        },
+        context: {
+          isEnterpriseAdmin: requestingUser.isEnterpriseAdmin,
+          allCompanies: req.query.allCompanies === 'true'
+        }
+      }
+    });
+
   } catch (error) {
     console.error('Error fetching employees:', error);
-    res.status(500).json({ message: 'Server error while fetching employees' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error while fetching employees',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 
@@ -1463,14 +1608,17 @@ exports.updateEmployee = async (req, res) => {
 
 // Create new employee within an enterprise
 exports.createEmployee = async (req, res) => {
+  console.log("Incoming createEmployee request:", req.body);
+
   try {
-    // Verify the requesting user is an enterprise admin
     const requestingUser = await User.findById(req.user._id);
+
+    // Only allow users with Executive role
     if (requestingUser.role !== "Enterprise(CEO, CFO, etc.)") {
-  return res.status(403).json({
-    message: "Only executives (CEO, CFO, etc.) can create employees"
-  });
-}
+      return res.status(403).json({
+        message: "Only executives (CEO, CFO, etc.) can create employees"
+      });
+    }
 
     const {
       firstName,
@@ -1494,50 +1642,46 @@ exports.createEmployee = async (req, res) => {
     if (!firstName || !lastName || !email || !phoneNumber || !position) {
       return res.status(400).json({
         message: "First name, last name, email, phone number and position are required",
-        requiredFields: [
-          'firstName',
-          'lastName',
-          'email',
-          'phoneNumber',
-          'position'
-        ]
+        requiredFields: ['firstName', 'lastName', 'email', 'phoneNumber', 'position']
       });
     }
 
-    // Check if employee with email already exists in this company
+    // Check for duplicate email within the same company
     const existingEmployee = await User.findOne({ 
       email,
       company: requestingUser.company 
     });
-    
+
     if (existingEmployee) {
       return res.status(400).json({ 
         message: "Employee with this email already exists in your company" 
       });
     }
 
-    // Validate department exists in this company
+    // Validate department exists and belongs to the requesting user's company
     let validDepartmentId = null;
-    if (department || departmentId) {
-      const departmentQuery = departmentId ? 
-        { _id: departmentId, company: requestingUser.company } : 
-        { name: department, company: requestingUser.company };
-      
-      const departmentDoc = await Department.findOne(departmentQuery);
-      
+    const departmentToCheck = departmentId || department;
+
+    if (departmentToCheck) {
+      const departmentDoc = await Department.findOne({
+        _id: departmentToCheck,
+        company: requestingUser.company
+      });
+
       if (!departmentDoc) {
-        return res.status(400).json({ 
-          message: "Department not found in your company" 
+        return res.status(400).json({
+          message: "Department not found in your company"
         });
       }
+
       validDepartmentId = departmentDoc._id;
     }
 
-    // Generate registration token (48 hours)
+    // Generate a registration token
     const registrationToken = crypto.randomBytes(32).toString('hex');
-    const registrationTokenExpires = Date.now() + 48 * 60 * 60 * 1000;
+    const registrationTokenExpires = Date.now() + 48 * 60 * 60 * 1000; // 48 hours
 
-    // Create new employee (automatically assigned to same company as admin)
+    // Create the new employee
     const newEmployee = new User({
       firstName,
       lastName,
@@ -1555,7 +1699,7 @@ exports.createEmployee = async (req, res) => {
       employmentType: employmentType || 'full-time',
       workLocation: workLocation || 'office',
       manager: manager || null,
-      role: position,
+      role: position, // Assuming role = position title
       company: requestingUser.company,
       companyName: requestingUser.companyName,
       industry: requestingUser.industry,
@@ -1566,7 +1710,7 @@ exports.createEmployee = async (req, res) => {
 
     const savedEmployee = await newEmployee.save();
 
-    // Update department employee count if department is assigned
+    // Update department with new employee if department exists
     if (validDepartmentId) {
       await Department.findByIdAndUpdate(validDepartmentId, {
         $addToSet: { employees: savedEmployee._id },
@@ -1574,10 +1718,10 @@ exports.createEmployee = async (req, res) => {
       });
     }
 
-    // Generate registration link
+    // Generate the registration link
     const registrationLink = `${process.env.FRONTEND_URL}/complete-registration?token=${registrationToken}&email=${encodeURIComponent(email)}`;
-    
-    // Send registration email
+
+    // Compose and send email
     const emailSubject = `Complete Your Registration - ${requestingUser.companyName}`;
     const emailMessage = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -1614,20 +1758,21 @@ exports.createEmployee = async (req, res) => {
 
   } catch (error) {
     console.error('Error creating employee:', error);
-    
+
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
       return res.status(400).json({ 
         message: `An employee with this ${field} already exists` 
       });
     }
-    
+
     res.status(500).json({ 
       message: 'Server error while creating employee',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
+
 
 
 
