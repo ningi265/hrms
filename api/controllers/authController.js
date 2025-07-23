@@ -1417,7 +1417,32 @@ exports.getEmployees = async (req, res) => {
         message: "User not found" 
       });
     }
-    const allowedRoles = ['Sales/Marketing', 'IT/Technical', 'Operations', 'Driver', 'Accounting/Finance'];
+    const allowedRoles = ['Sales/Marketing', 'IT/Technical', 'Operations', 'Driver', 'Accounting/Finance',"Software Engineer",
+    "Senior Software Engineer", 
+    "Lead Engineer",
+    "Product Manager",
+    "Senior Product Manager",
+    "Data Scientist",
+    "Data Analyst",
+    "UI/UX Designer",
+    "Senior Designer",
+    "DevOps Engineer",
+    "Quality Assurance Engineer",
+    "Business Analyst",
+    "Project Manager",
+    "Scrum Master",
+    "Sales Representative",
+    "Sales Manager",
+    "Marketing Specialist",
+    "Marketing Manager",
+    "HR Specialist",
+    "HR Manager",
+    "Finance Analyst",
+    "Accountant",
+    "Administrative Assistant",
+    "Office Manager",
+    "Customer Support Representative",
+    "Customer Success Manager"];
     // Base query - filter by company unless enterprise admin requests all
    const baseQuery = requestingUser.role === 'Enterprise(CEO, CFO, etc.)' && req.query.allCompanies === 'true'
   ? { role: { $in: allowedRoles } }
@@ -1608,12 +1633,14 @@ exports.updateEmployee = async (req, res) => {
 
 // Create new employee within an enterprise
 exports.createEmployee = async (req, res) => {
+  console.log("Incoming Create Employee Request:", req.body);   
   try {
     // Verify the requesting user is an enterprise admin
     const requestingUser = await User.findById(req.user._id);
-    if (requestingUser.role !== "Enterprise(CEO, CFO, etc.)") {
+    if (!requestingUser.isEnterpriseAdmin && requestingUser.role !== "Enterprise(CEO, CFO, etc.)") {
       return res.status(403).json({
-        message: "Only executives (CEO, CFO, etc.) can create employees"
+        message: "Only enterprise admins or executives can create employees",
+        code: "ADMIN_ACCESS_REQUIRED"
       });
     }
 
@@ -1636,28 +1663,28 @@ exports.createEmployee = async (req, res) => {
     } = req.body;
 
     // Validate required fields
-    if (!firstName || !lastName || !email || !phoneNumber || !position) {
+    const requiredFields = ['firstName', 'lastName', 'email', 'phoneNumber', 'position'];
+    const missingFields = requiredFields.filter(field => !req.body[field]);
+    
+    if (missingFields.length > 0) {
       return res.status(400).json({
-        message: "First name, last name, email, phone number and position are required",
-        requiredFields: [
-          'firstName',
-          'lastName',
-          'email',
-          'phoneNumber',
-          'position'
-        ]
+        message: "Missing required fields",
+        code: "MISSING_REQUIRED_FIELDS",
+        requiredFields,
+        missingFields
       });
     }
 
     // Check if employee with email already exists in this company
     const existingEmployee = await User.findOne({ 
-      email,
+      email: email.toLowerCase(),
       company: requestingUser.company 
     });
     
     if (existingEmployee) {
       return res.status(400).json({ 
-        message: "Employee with this email already exists in your company" 
+        message: "Employee with this email already exists in your company",
+        code: "DUPLICATE_EMPLOYEE_EMAIL"
       });
     }
 
@@ -1672,21 +1699,45 @@ exports.createEmployee = async (req, res) => {
       
       if (!departmentDoc) {
         return res.status(400).json({ 
-          message: "Department not found in your company" 
+          message: "Department not found in your company",
+          code: "DEPARTMENT_NOT_FOUND"
         });
       }
       validDepartmentId = departmentDoc._id;
     }
 
-    // Generate registration token (48 hours)
-    const registrationToken = crypto.randomBytes(32).toString('hex');
-    const registrationTokenExpires = Date.now() + 48 * 60 * 60 * 1000;
+    // Get company's subscription details
+    const companySubscription = requestingUser.billing?.subscription || {
+      plan: 'trial',
+      status: 'trialing'
+    };
 
-    // Create new employee (automatically assigned to same company as admin)
+    // Calculate remaining subscription time
+    let trialEndDate = requestingUser.billing?.trialEndDate || null;
+    let subscriptionEndDate = companySubscription.currentPeriodEnd || null;
+    let subscriptionStatus = companySubscription.status || 'trialing';
+
+    // Set default storage limits based on plan
+    let storageLimit = 100; // Default 100MB
+    if (companySubscription.plan === 'enterprise') {
+      storageLimit = 10240; // 10GB
+    } else if (companySubscription.plan === 'professional') {
+      storageLimit = 5120; // 5GB
+    }
+
+    // Generate URL-safe registration token
+    const registrationToken = crypto.randomBytes(32).toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
+    
+    const registrationTokenExpires = Date.now() + 48 * 60 * 60 * 1000; // 48 hours
+
+    // Create new employee with subscription details
     const newEmployee = new User({
       firstName,
       lastName,
-      email,
+      email: email.toLowerCase(),
       phoneNumber,
       address,
       department,
@@ -1706,7 +1757,30 @@ exports.createEmployee = async (req, res) => {
       industry: requestingUser.industry,
       registrationStatus: 'pending',
       registrationToken,
-      registrationTokenExpires
+      registrationTokenExpires,
+      billing: {
+        trialStartDate: requestingUser.billing?.trialStartDate || new Date(),
+        trialEndDate: trialEndDate,
+        subscription: {
+          plan: companySubscription.plan,
+          status: subscriptionStatus,
+          currentPeriodStart: companySubscription.currentPeriodStart || new Date(),
+          currentPeriodEnd: subscriptionEndDate,
+          cancelAtPeriodEnd: companySubscription.cancelAtPeriodEnd || false,
+          subscriptionId: companySubscription.subscriptionId || null,
+          priceId: companySubscription.priceId || null
+        }
+      },
+      usage: {
+        apiCalls: {
+          count: 0,
+          lastReset: new Date()
+        },
+        storage: {
+          used: 0,
+          limit: storageLimit
+        }
+      }
     });
 
     const savedEmployee = await newEmployee.save();
@@ -1719,15 +1793,15 @@ exports.createEmployee = async (req, res) => {
       });
     }
 
-    // Generate registration link
-    const registrationLink = `${process.env.FRONTEND_URL}/complete-registration?token=${registrationToken}&email=${encodeURIComponent(email)}`;
+    // Generate properly encoded registration link
+    const registrationLink = `${process.env.FRONTEND_URL}/complete-registration?token=${encodeURIComponent(registrationToken)}&email=${encodeURIComponent(email)}`;
     
     // Prepare SendGrid email
     const msg = {
       to: email,
       from: {
         name: requestingUser.companyName || 'NexusMWI',
-        email: 'noreply@nexusmwi.com' // Must be verified in SendGrid
+        email: process.env.SENDGRID_FROM_EMAIL || 'noreply@nexusmwi.com'
       },
       subject: `Complete Your Registration - ${requestingUser.companyName}`,
       html: `
@@ -1751,22 +1825,31 @@ exports.createEmployee = async (req, res) => {
     try {
       // Send email via SendGrid API
       await sgMail.send(msg);
-      console.log(`Registration email sent to ${email} via SendGrid`);
+      console.log(`Registration email sent to ${email}`);
       
       res.status(201).json({
+        success: true,
         message: 'Employee created successfully. Registration email sent.',
+        code: "EMPLOYEE_CREATED",
         employee: {
           id: savedEmployee._id,
           firstName,
           lastName,
           email,
           position,
-          status: 'pending'
+          status: 'pending',
+          subscriptionPlan: companySubscription.plan,
+          subscriptionEndDate: subscriptionEndDate || trialEndDate,
+          registrationTokenExpires: new Date(registrationTokenExpires)
+        },
+        meta: {
+          token: registrationToken, // For debugging purposes only
+          emailSent: true
         }
       });
       
     } catch (sendGridError) {
-      console.error('SendGrid failed to send registration email:', sendGridError);
+      console.error('Failed to send registration email:', sendGridError);
       
       // Clean up the created employee record if email fails
       await User.findByIdAndDelete(savedEmployee._id);
@@ -1779,13 +1862,13 @@ exports.createEmployee = async (req, res) => {
       }
       
       res.status(500).json({
+        success: false,
         message: "Employee created but failed to send registration email",
-        error: sendGridError.message,
+        code: "EMAIL_SEND_FAILED",
+        error: process.env.NODE_ENV === 'development' ? sendGridError.message : undefined,
         debug: {
-          sendGridError: {
-            code: sendGridError.code,
-            response: sendGridError.response
-          }
+          emailAttempted: email,
+          tokenGenerated: registrationToken
         }
       });
     }
@@ -1796,12 +1879,16 @@ exports.createEmployee = async (req, res) => {
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
       return res.status(400).json({ 
-        message: `An employee with this ${field} already exists` 
+        success: false,
+        message: `An employee with this ${field} already exists`,
+        code: "DUPLICATE_EMPLOYEE_DATA"
       });
     }
     
     res.status(500).json({ 
+      success: false,
       message: 'Server error while creating employee',
+      code: "SERVER_ERROR",
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
@@ -1821,70 +1908,64 @@ exports.verifyRegistration = async (req, res) => {
     if (!token) {
       console.log('❌ No token provided');
       return res.status(400).json({ 
-        message: 'Registration token is required' 
+        message: 'Registration token is required',
+        code: 'TOKEN_REQUIRED'
       });
     }
 
-    // First, let's see if ANY user has this token (regardless of expiration)
-    const userWithToken = await User.findOne({ registrationToken: token })
-      .select('registrationToken registrationTokenExpires registrationStatus firstName lastName email');
-    
-    console.log('🔍 User with this token:', userWithToken ? 'FOUND' : 'NOT FOUND');
-    
-    if (userWithToken) {
-      console.log('👤 User details:');
-      console.log('   - Name:', userWithToken.firstName, userWithToken.lastName);
-      console.log('   - Email:', userWithToken.email);
-      console.log('   - Registration Status:', userWithToken.registrationStatus);
-      console.log('   - Token Expires:', userWithToken.registrationTokenExpires);
-      console.log('   - Token Expired?', userWithToken.registrationTokenExpires < Date.now());
-      
-      if (userWithToken.registrationTokenExpires) {
-        const timeLeft = userWithToken.registrationTokenExpires - Date.now();
-        const hoursLeft = Math.round(timeLeft / (1000 * 60 * 60) * 100) / 100;
-        console.log('   - Hours left:', hoursLeft);
-      }
-    }
+    // Decode URL-encoded token
+    const decodedToken = decodeURIComponent(token);
 
-    // Now check for valid (non-expired) token
-    const user = await User.findOne({
-      registrationToken: token,
-      registrationTokenExpires: { $gt: Date.now() }
-    }).select('-password');
+    // Find user with this token
+    const user = await User.findOne({ 
+      registrationToken: decodedToken 
+    }).select('firstName lastName email position companyName department registrationTokenExpires registrationStatus');
 
     if (!user) {
-      console.log('❌ No valid user found with unexpired token');
-      
-      // Check if token exists but is expired
-      if (userWithToken && userWithToken.registrationTokenExpires < Date.now()) {
-        console.log('💀 Token found but EXPIRED');
-        return res.status(400).json({ 
-          message: 'This registration link has expired. Please contact HR to resend the registration email.',
-          expired: true,
-          debug: {
-            tokenFound: true,
-            tokenExpired: true,
-            expiredAt: userWithToken.registrationTokenExpires,
-            currentTime: Date.now()
-          }
-        });
-      } else {
-        console.log('🚫 Token not found in database');
-        return res.status(400).json({ 
-          message: 'Invalid registration link. Please contact HR for assistance.',
-          expired: false,
-          debug: {
-            tokenFound: false,
-            searchedToken: token
-          }
-        });
-      }
+      console.log('🚫 Token not found in database');
+      return res.status(400).json({ 
+        message: 'Invalid registration link. Please request a new registration email.',
+        code: 'TOKEN_NOT_FOUND'
+      });
+    }
+
+    console.log('👤 User details:');
+    console.log('   - Name:', user.firstName, user.lastName);
+    console.log('   - Email:', user.email);
+    console.log('   - Registration Status:', user.registrationStatus);
+    console.log('   - Token Expires:', user.registrationTokenExpires);
+    
+    // Calculate time remaining
+    const isExpired = user.registrationTokenExpires < Date.now();
+    const timeLeft = user.registrationTokenExpires - Date.now();
+    const hoursLeft = Math.round(timeLeft / (1000 * 60 * 60) * 100) / 100;
+    
+    console.log('   - Token Expired?', isExpired);
+    console.log('   - Hours left:', hoursLeft);
+
+    if (isExpired) {
+      console.log('💀 Token found but EXPIRED');
+      return res.status(400).json({ 
+        message: 'This registration link has expired. Please request a new registration email.',
+        code: 'TOKEN_EXPIRED',
+        debug: {
+          expiredAt: user.registrationTokenExpires,
+          hoursExpired: Math.abs(hoursLeft)
+        }
+      });
+    }
+
+    if (user.registrationStatus === 'completed') {
+      console.log('⚠️ Registration already completed');
+      return res.status(400).json({ 
+        message: 'Your registration is already complete. Please log in instead.',
+        code: 'ALREADY_COMPLETED'
+      });
     }
 
     console.log('✅ Valid registration token found!');
     console.log('================================\n');
 
-    // Return user information for the registration form
     res.status(200).json({
       success: true,
       message: 'Registration token is valid',
@@ -1894,16 +1975,21 @@ exports.verifyRegistration = async (req, res) => {
         lastName: user.lastName,
         email: user.email,
         position: user.position,
-        companyName: user.companyName || 'Your Company',
+        companyName: user.companyName,
         department: user.department
+      },
+      meta: {
+        expiresAt: user.registrationTokenExpires,
+        hoursRemaining: hoursLeft
       }
     });
 
   } catch (error) {
     console.error('❌ Error verifying registration token:', error);
     res.status(500).json({ 
-      message: 'Server error while verifying registration token',
-      error: error.message 
+      message: 'Error verifying registration token',
+      code: 'SERVER_ERROR',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };

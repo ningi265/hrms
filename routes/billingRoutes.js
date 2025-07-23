@@ -11,7 +11,32 @@ const billingRoles = [
   "Executive (CEO, CFO, etc.)",
   "Management",
   "Human Resources",
-  "Enterprise(CEO, CFO, etc.)"
+  "Enterprise(CEO, CFO, etc.)","Software Engineer",
+    "Senior Software Engineer", 
+    "Lead Engineer",
+    "Product Manager",
+    "Senior Product Manager",
+    "Data Scientist",
+    "Data Analyst",
+    "UI/UX Designer",
+    "Senior Designer",
+    "DevOps Engineer",
+    "Quality Assurance Engineer",
+    "Business Analyst",
+    "Project Manager",
+    "Scrum Master",
+    "Sales Representative",
+    "Sales Manager",
+    "Marketing Specialist",
+    "Marketing Manager",
+    "HR Specialist",
+    "HR Manager",
+    "Finance Analyst",
+    "Accountant",
+    "Administrative Assistant",
+    "Office Manager",
+    "Customer Support Representative",
+    "Customer Success Manager"
 ];
 
 // Public webhook endpoint (must be before other routes and without auth)
