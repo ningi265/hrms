@@ -2,6 +2,8 @@ const mongoose = require("mongoose");
 
 const RFQSchema = new mongoose.Schema({
   // Core fields (existing)
+   company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: true }, // Added company reference
+      department: { type: mongoose.Schema.Types.ObjectId, ref: "Department", required: true }, // Changed to ObjectId reference
   procurementOfficer: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: "User", 

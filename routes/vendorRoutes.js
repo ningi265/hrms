@@ -9,7 +9,7 @@ router.post("/", protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance"]), addVendor);
+        "Accounting/Finance", "Enterprise(CEO, CFO, etc.)"]), addVendor);
 router.get("/", protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",

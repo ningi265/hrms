@@ -39,7 +39,7 @@ exports.getAllDepartments = async (req, res) => {
     const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
     const sort = { [sortField]: sortOrder };
 
-    // Get departments with full details
+    // Get departments with full details including budget allocation
     const departments = await Department.find(baseQuery)
       .populate({
         path: 'headEmployeeId',
@@ -66,17 +66,56 @@ exports.getAllDepartments = async (req, res) => {
         path: 'company',
         select: 'name industry'
       })
+      .populate({
+        path: 'currentBudgetAllocation',
+        select: 'budgetPeriod totalBudget totalAllocated remainingBudget status approvalStatus'
+      })
       .sort(sort)
       .skip(skip)
       .limit(limit)
       .lean();
 
+    // Enhance each department with budget information
+    const enhancedDepartments = departments.map(dept => {
+      // Calculate budget utilization percentage
+      const utilization = dept.budget > 0 
+        ? Math.round((dept.actualSpending / dept.budget) * 100)
+        : 0;
+
+      // Create budget info object
+      const budgetInfo = {
+        code: dept.departmentCode || `${dept.name.replace(/\s+/g, '').toUpperCase()}-Q1-${new Date().getFullYear()}`,
+        department: dept.name,
+        remaining: dept.budget - dept.actualSpending,
+        total: dept.budget,
+        actualSpending: dept.actualSpending,
+        utilizationPercentage: utilization,
+        status: dept.currentBudgetAllocation?.status || 'not_allocated',
+        period: dept.currentBudgetAllocation?.budgetPeriod || 'N/A',
+        allocationStatus: dept.currentBudgetAllocation?.approvalStatus || 'not_submitted'
+      };
+
+      return {
+        ...dept,
+        budgetInfo
+      };
+    });
+
     // Get total count for pagination
     const totalCount = await Department.countDocuments(baseQuery);
 
-    // Get department statistics
+    // Get department statistics including budget info
     const stats = await Department.aggregate([
       { $match: baseQuery },
+      { 
+        $lookup: {
+          from: 'budgetallocations',
+          localField: 'currentBudgetAllocation',
+          foreignField: '_id',
+          as: 'budgetAllocation'
+        }
+      },
+      { $unwind: { path: '$budgetAllocation', preserveNullAndEmptyArrays: true } },
       { 
         $group: {
           _id: null,
@@ -88,29 +127,59 @@ exports.getAllDepartments = async (req, res) => {
             $sum: { $cond: [{ $eq: ["$status", "inactive"] }, 1, 0] } 
           },
           totalBudget: { $sum: "$budget" },
-          avgEmployeeCount: { $avg: "$employeeCount" }
+          totalAllocated: { $sum: "$budgetAllocation.totalAllocated" },
+          totalRemaining: { $sum: "$budgetAllocation.remainingBudget" },
+          avgEmployeeCount: { $avg: "$employeeCount" },
+          avgBudgetUtilization: { 
+            $avg: { 
+              $cond: [
+                { $gt: ["$budget", 0] },
+                { $multiply: [ { $divide: ["$actualSpending", "$budget"] }, 100 ] },
+                0
+              ]
+            }
+          }
         }
       }
     ]);
 
-    // Get department distribution by location
+    // Get department distribution by location with budget info
     const locationDistribution = await Department.aggregate([
       { $match: baseQuery },
+      { 
+        $lookup: {
+          from: 'budgetallocations',
+          localField: 'currentBudgetAllocation',
+          foreignField: '_id',
+          as: 'budgetAllocation'
+        }
+      },
+      { $unwind: { path: '$budgetAllocation', preserveNullAndEmptyArrays: true } },
       { 
         $group: {
           _id: "$location",
           count: { $sum: 1 },
-          totalBudget: { $sum: "$budget" }
+          totalBudget: { $sum: "$budget" },
+          totalAllocated: { $sum: "$budgetAllocation.totalAllocated" },
+          avgUtilization: {
+            $avg: {
+              $cond: [
+                { $gt: ["$budget", 0] },
+                { $multiply: [ { $divide: ["$actualSpending", "$budget"] }, 100 ] },
+                null
+              ]
+            }
+          }
         }
       },
       { $sort: { count: -1 } }
     ]);
 
-    console.log(`Fetched ${departments.length} departments for company ${requestingUser.company}`);
+    console.log(`Fetched ${enhancedDepartments.length} departments with budget info for company ${requestingUser.company}`);
 
     res.status(200).json({
       success: true,
-      data: departments,
+      data: enhancedDepartments,
       meta: {
         total: totalCount,
         page,
@@ -128,10 +197,10 @@ exports.getAllDepartments = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching departments:', error);
+    console.error('Error fetching departments with budget info:', error);
     res.status(500).json({ 
       success: false,
-      message: 'Server error while fetching departments',
+      message: 'Server error while fetching departments with budget information',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

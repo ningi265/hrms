@@ -97,6 +97,15 @@ const DepartmentSchema = new mongoose.Schema({
     default: new Date().getFullYear()
   },
 
+  budgetAllocations: [{
+  type: mongoose.Schema.ObjectId,
+  ref: 'BudgetAllocation'
+}],
+currentBudgetAllocation: {
+  type: mongoose.Schema.ObjectId,
+  ref: 'BudgetAllocation'
+},
+
   // Status and Operations
   status: {
     type: String,

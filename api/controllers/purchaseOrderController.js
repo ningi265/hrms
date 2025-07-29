@@ -1,5 +1,6 @@
 const PurchaseOrder = require("../../models/purchaseOrder");
 const RFQ = require("../../models/RFQ");
+const User = require('../../models/user');
 const { notifyVendorPOCreated, notifyPOApproval, notifyPOShipped, notifyPODelivered, notifyPOConfirmed } = require("../services/notificationService");
 
 exports.createPO = async (req, res) => {
@@ -134,56 +135,122 @@ exports.getPOById = async (req, res) => {
 // Get purchase order stats (total, pending, approved, rejected, shipped, delivered, confirmed)
 exports.getPOStats = async (req, res) => {
   try {
-      console.log("Fetching Purchase Order Stats");
-      
-      // Count operations
-      const [total, pending, approved, rejected, shipped, delivered, confirmed] = await Promise.all([
-          PurchaseOrder.countDocuments(),
-          PurchaseOrder.countDocuments({ status: "pending" }),
-          PurchaseOrder.countDocuments({ status: "approved" }),
-          PurchaseOrder.countDocuments({ status: "rejected" }),
-          PurchaseOrder.countDocuments({ deliveryStatus: "shipped" }),
-          PurchaseOrder.countDocuments({ deliveryStatus: "delivered" }),
-          PurchaseOrder.countDocuments({ deliveryStatus: "confirmed" })
-      ]);
+    console.log("Fetching Purchase Order Stats");
+    
+    // Get the requesting user's company
+    const requestingUser = await User.findById(req.user._id).select('company isEnterpriseAdmin');
+    if (!requestingUser) {
+      return res.status(404).json({ 
+        success: false,
+        message: "User not found" 
+      });
+    }
 
-      // Get actual pending POs with relevant data
-      const pendingPOs = await PurchaseOrder.find({ status: "pending" })
-          .populate('vendor', 'name email')  // Adjust according to your schema
-          .populate('rfq', 'requisitionNumber')  // Example additional population
-          .select('poNumber amount createdAt dueDate')  // Only include essential fields
-          .sort({ createdAt: -1 })  // Newest first
-          .limit(10);  // Limit results
+    // Base query - filter by company unless user is enterprise admin with special privileges
+    const companyQuery = requestingUser.isEnterpriseAdmin && req.query.allCompanies ? {} : { company: requestingUser.company };
 
-      const stats = {
-          counts: {
-              total,
-              pending,
-              approved,
-              rejected,
-              shipped,
-              delivered,
-              confirmed
-          },
-          pendingPOs: pendingPOs  // Include the actual pending purchase orders
-      };
+    // Count operations with company filtering
+    const [total, pending, approved, rejected, shipped, delivered, confirmed] = await Promise.all([
+      PurchaseOrder.countDocuments(companyQuery),
+      PurchaseOrder.countDocuments({ ...companyQuery, status: "pending" }),
+      PurchaseOrder.countDocuments({ ...companyQuery, status: "approved" }),
+      PurchaseOrder.countDocuments({ ...companyQuery, status: "rejected" }),
+      PurchaseOrder.countDocuments({ ...companyQuery, deliveryStatus: "shipped" }),
+      PurchaseOrder.countDocuments({ ...companyQuery, deliveryStatus: "delivered" }),
+      PurchaseOrder.countDocuments({ ...companyQuery, deliveryStatus: "confirmed" })
+    ]);
 
-      console.log("Successfully fetched PO stats");
-      res.json(stats);
+    // Get actual pending POs with relevant data and company filtering
+    const pendingPOs = await PurchaseOrder.find({ ...companyQuery, status: "pending" })
+      .populate({
+        path: 'vendor',
+        select: 'name email contactPerson',
+        populate: {
+          path: 'company',
+          select: 'name'
+        }
+      })
+      .populate({
+        path: 'rfq',
+        select: 'requisitionNumber title',
+        populate: {
+          path: 'requisition',
+          select: 'requisitionNumber'
+        }
+      })
+      .populate({
+        path: 'company',
+        select: 'name logo'
+      })
+      .select('poNumber amount createdAt dueDate status deliveryStatus')
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .lean();
+
+    // Calculate PO distribution by vendor
+    const vendorStats = await PurchaseOrder.aggregate([
+      { $match: companyQuery },
+      {
+        $group: {
+          _id: "$vendor",
+          count: { $sum: 1 },
+          totalAmount: { $sum: "$amount" }
+        }
+      },
+      { $sort: { count: -1 } },
+      { $limit: 5 }
+    ]);
+
+    // Populate vendor names in the aggregation results
+    const populatedVendorStats = await PurchaseOrder.populate(vendorStats, {
+      path: '_id',
+      select: 'name'
+    });
+
+    const stats = {
+      success: true,
+      data: {
+        counts: {
+          total,
+          pending,
+          approved,
+          rejected,
+          shipped,
+          delivered,
+          confirmed
+        },
+        vendorDistribution: populatedVendorStats.map(v => ({
+          vendor: v._id?.name || 'Unknown',
+          count: v.count,
+          totalAmount: v.totalAmount
+        })),
+        pendingPOs,
+        meta: {
+          context: {
+            company: requestingUser.company,
+            isEnterpriseAdmin: requestingUser.isEnterpriseAdmin,
+            allCompanies: req.query.allCompanies ? true : false
+          }
+        }
+      }
+    };
+
+    console.log("Successfully fetched PO stats");
+    res.status(200).json(stats);
 
   } catch (err) {
-      console.error("Error in getPOStats:", {
-          message: err.message,
-          stack: err.stack,
-          timestamp: new Date().toISOString()
-      });
-      res.status(500).json({ 
-          message: "Failed to fetch purchase order statistics",
-          error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
-      });
+    console.error("Error in getPOStats:", {
+      message: err.message,
+      stack: err.stack,
+      timestamp: new Date().toISOString()
+    });
+    res.status(500).json({ 
+      success: false,
+      message: "Failed to fetch purchase order statistics",
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    });
   }
 };
-
 // Vendor confirms receipt and acceptance of a PO
 exports.confirmPO = async (req, res) => {
   try {

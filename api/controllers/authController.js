@@ -2054,10 +2054,10 @@ exports.completeRegistration = async (req, res) => {
 
     await user.save();
 
-    // Send welcome email
+    // Send welcome email using SendGrid
     try {
       const welcomeSubject = `Welcome to ${process.env.EMAIL_FROM_NAME || 'the team'}!`;
-      const welcomeMessage = `
+      const welcomeHtml = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
           <h2 style="color: #333;">Welcome aboard, ${user.firstName}!</h2>
           <p>Your account has been successfully set up. Here are your login details:</p>
@@ -2072,7 +2072,21 @@ exports.completeRegistration = async (req, res) => {
         </div>
       `;
 
-      await sendEmailNotification(user.email, welcomeSubject, welcomeMessage);
+      const welcomeText = `Welcome to ${process.env.EMAIL_FROM_NAME || 'the team'}!\n\nDear ${user.firstName},\n\nYour account has been successfully set up.\n\nLogin details:\nUsername: ${username}\nEmail: ${user.email}\nPosition: ${user.position}\n\nYou can now log in to your account.\n\nIf you have any questions, please contact your supervisor or HR department.\n\nBest regards,\nThe ${process.env.EMAIL_FROM_NAME || 'Company'} Team`;
+
+      const msg = {
+        to: user.email,
+        from: {
+          name: process.env.EMAIL_FROM_NAME || 'NexusMWI',
+          email: process.env.SENDGRID_FROM_EMAIL || 'noreply@nexusmwi.com'
+        },
+        subject: welcomeSubject,
+        html: welcomeHtml,
+        text: welcomeText
+      };
+
+      await sgMail.send(msg);
+      console.log(`Welcome email sent to ${user.email}`);
     } catch (emailError) {
       console.error('Welcome email failed:', emailError);
       // Don't fail the registration if email fails

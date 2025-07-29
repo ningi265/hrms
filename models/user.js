@@ -322,7 +322,7 @@ isEnterpriseAdmin: {
   },
   industry: {
     type: String,
-    required: [true, 'Industry is required'],
+    required: [false, 'Industry is required'],
     trim: true
   },
   role: { 

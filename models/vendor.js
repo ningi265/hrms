@@ -1,13 +1,191 @@
 const mongoose = require("mongoose");
 
 const VendorSchema = new mongoose.Schema({
-    name: { type: String, required: true },
-    email: { type: String, required: true, unique: true },
-    phone: { type: String, required: true },
-    address: { type: String, required: true },
-    categories: [{ type: String }], 
-    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },// E.g., ["Electronics", "Office Supplies"]
-    rating: { type: Number, default: 0 }, // Average rating from RFQs
-}, { timestamps: true });
+    // Basic Information
+    name: {
+        type: String,
+        required: [true, "Vendor name is required"],
+        trim: true,
+        maxlength: [100, "Vendor name cannot exceed 100 characters"]
+    },
+    email: {
+        type: String,
+        required: [true, "Email is required"],
+        unique: true,
+        lowercase: true,
+        trim: true,
+        validate: {
+            validator: function(v) {
+                return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+            },
+            message: props => `${props.value} is not a valid email address!`
+        }
+    },
+    phoneNumber: {
+        type: String,
+        required: [true, "Phone number is required"],
+        validate: {
+            validator: function(v) {
+                return /^\+?[\d\s-]{10,15}$/.test(v);
+            },
+            message: props => `${props.value} is not a valid phone number!`
+        }
+    },
+    address: {
+        type: String,
+        required: [true, "Address is required"],
+        trim: true
+    },
+
+    // Business Details
+    categories: [{
+        type: String,
+        required: [true, "At least one category is required"],
+        trim: true,
+        lowercase: true
+    }],
+
+    businessName: {
+        type: String,
+        required: [true, "Business name is required"],
+        trim: true,
+        maxlength: [200, "Business name cannot exceed 200 characters"]
+    },
+    businessDescription: {
+        type: String,
+        trim: false,
+        maxlength: [500, "Description cannot exceed 500 characters"]
+    },
+    
+    // Legal Information
+    taxpayerIdentificationNumber: {
+        type: String,
+        required: true,
+        unique: true,
+        trim: true
+    },
+    registrationNumber: {
+        type: String,
+        required: true,
+        unique: true,
+        trim: true
+    },
+    companyType: {
+        type: String,
+        trim: true
+    },
+    countryOfRegistration: {
+        type: String,
+        default: "Malawi",
+        trim: true
+    },
+
+    // ADD MISSING FIELDS THAT THE CONTROLLER EXPECTS
+    tinIssuedDate: {
+        type: Date,
+        default: Date.now
+    },
+    registrationIssuedDate: {
+        type: Date,
+        default: Date.now
+    },
+    formOfBusiness: {
+        type: String,
+        trim: true
+    },
+    ownershipType: {
+        type: String,
+        trim: true
+    },
+    termsAccepted: {
+        type: Boolean,
+        default: false
+    },
+    termsAcceptedDate: {
+        type: Date
+    },
+
+    // Relationships
+    user: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        required: [true, "User reference is required"]
+    },
+    company: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Company",
+        required: [true, "Company reference is required"]
+    },
+    // ADD VENDOR REFERENCE (seems like this should reference the User with role "Vendor")
+    vendor: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User"
+    },
+
+    // Status and Metadata
+    registrationStatus: {
+        type: String,
+        enum: ["pending", "approved", "rejected", "suspended"],
+        default: "approved"
+    },
+    rating: {
+        type: Number,
+        min: 0,
+        max: 5,
+        default: 0
+    },
+    ratingCount: {
+        type: Number,
+        default: 0
+    },
+
+    // Documents and Files
+    documents: [{
+        name: String,
+        url: String,
+        fileType: String,
+        uploadedAt: {
+            type: Date,
+            default: Date.now
+        }
+    }],
+
+    // Financial Information
+    paymentTerms: {
+        type: String,
+        trim: true
+    },
+    preferredPaymentMethod: {
+        type: String,
+        trim: true
+    },
+
+    // Timestamps
+    createdAt: {
+        type: Date,
+        default: Date.now
+    },
+    updatedAt: {
+        type: Date,
+        default: Date.now
+    }
+
+}, {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true }
+});
+
+// Indexes for optimized queries
+VendorSchema.index({ email: 1 }); // For fast email lookups
+VendorSchema.index({ categories: 1 }); // For category-based searches
+VendorSchema.index({ registrationStatus: 1 }); // For status-based queries
+VendorSchema.index({ rating: -1 }); // For sorting by rating
+
+// Middleware to update timestamps
+VendorSchema.pre('save', function(next) {
+    this.updatedAt = Date.now();
+    next();
+});
 
 module.exports = mongoose.model("Vendor", VendorSchema);

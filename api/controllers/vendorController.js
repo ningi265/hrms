@@ -1,21 +1,17 @@
-const Vendor = require("../../models/registration");
+const Vendor = require("../../models/vendor");
 const User = require("../../models/user");
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const nodemailer = require('nodemailer');
 const PDFDocument = require('pdfkit');
+const crypto = require('crypto');
 
 
 
 // Email configuration
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_APP_PASSWORD, // Use app password for Gmail
-  },
-});
+const sgMail = require('@sendgrid/mail');
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 // Configure multer for file upload
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
@@ -322,76 +318,334 @@ exports.getVendorDetails = async (req, res) => {
 
 // Original methods (keeping for compatibility)
 exports.addVendor = async (req, res) => {
-    try {
-        const { 
-            firstName, 
-            lastName, 
-            email, 
-            phoneNumber, 
-            address, 
-            categories, 
-            password,
-            companyName,
-            industry,
-            role = "employee"
-        } = req.body;
-        
-        console.log("req body", req.body);
-
-        const existingVendor = await Vendor.findOne({ email });
-        if (existingVendor) {
-            return res.status(400).json({ message: "Vendor with this email already exists" });
-        }
-
-        const user = await User.create({
-            firstName,
-            lastName,
-            email,
-            password,
-            phoneNumber,
-            companyName: companyName || `${firstName} ${lastName} Company`,
-            industry: industry || "General",
-            role: "employee",
-        });
-
-        const vendor = await Vendor.create({
-            name: `${firstName || ''} ${lastName || ''}`.trim() || 'Unnamed Vendor',
-            email,
-            phone: phoneNumber,
-            address: address || '',
-            categories: Array.isArray(categories) ? categories : [],
-            user: user._id,
-            businessName: companyName || `${firstName} ${lastName} Company`,
-            taxpayerIdentificationNumber: `TIN-${Date.now()}`, // Temporary TIN
-            registrationNumber: `REG-${Date.now()}`, // Temporary registration
-            tinIssuedDate: new Date(),
-            registrationIssuedDate: new Date(),
-            companyType: "Private Limited Company",
-            formOfBusiness: "Limited Liability Company",
-            ownershipType: "Private Ownership",
-            businessCategory: industry || "Other",
-            countryOfRegistration: "Malawi",
-            registrationStatus: "approved", // Auto-approve for old method
-            termsAccepted: true,
-            termsAcceptedDate: new Date()
-        });
-
-        res.status(201).json({ message: "Vendor added successfully", vendor });
-    } catch (err) {
-        console.error("Error adding vendor:", err);
-        res.status(500).json({ message: "Server error", error: err.message });
+  console.log("Incoming Create Vendor Request:", req.body);                         
+  try {
+    const requestingUser = await User.findById(req.user._id);
+    if (!requestingUser.isEnterpriseAdmin && requestingUser.role !== "Enterprise(CEO, CFO, etc.)") {
+      return res.status(403).json({ message: "Unauthorized to add vendors" });
     }
+
+    const { 
+      firstName,
+      lastName, 
+      email, 
+      phoneNumber, 
+      address, 
+      categories, 
+      companyName,
+      businessName,
+      taxpayerIdentificationNumber,
+      registrationNumber,
+      companyType,
+      formOfBusiness,
+      ownershipType,
+      countryOfRegistration = "Malawi",
+      role = "Vendor"
+    } = req.body;
+
+    // Check if vendor already exists
+    const existingVendor = await Vendor.findOne({ 
+      email: email.toLowerCase(),
+      company: requestingUser.company 
+    });
+    if (existingVendor) {
+      return res.status(400).json({ message: "Vendor with this email already exists" });
+    }
+
+    // Get company subscription details
+    const companySubscription = requestingUser.billing?.subscription || {
+      plan: "trial", // Fixed typo: "trail" -> "trial"
+      status: "trialing", // Fixed typo: "trailing" -> "trialing"
+    };
+
+    let trialEndDate = requestingUser.billing?.trialEndDate || null;
+    let subscriptionEndDate = companySubscription.currentPeriodEnd || null;
+    let subscriptionStatus = companySubscription.status || "trialing";
+
+    // Generate registration token
+    const registrationToken = crypto.randomBytes(32).toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
+      
+    const registrationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
+
+    // Create new User record for the vendor
+    const newVendor = new User({
+      firstName,
+      lastName,
+      email: email.toLowerCase(),
+      phoneNumber,
+      address, // Add this field
+      companyName: companyName || `${firstName} ${lastName} Company`,
+      role: "Vendor",
+      company: requestingUser.company, // Add company reference
+      registrationToken,
+      registrationTokenExpires,
+      registrationStatus: 'pending',
+      billing: {
+        trialStartDate: requestingUser.billing?.trialStartDate || new Date(),
+        trialEndDate: trialEndDate,
+        subscription: {
+          plan: companySubscription.plan,
+          status: subscriptionStatus,
+          currentPeriodStart: companySubscription.currentPeriodStart || new Date(),
+          currentPeriodEnd: subscriptionEndDate,
+          cancelAtPeriodEnd: companySubscription.cancelAtPeriodEnd || false,
+          subscriptionId: companySubscription.subscriptionId || null,
+          priceId: companySubscription.priceId || null
+        }
+      }
+    });
+
+    const savedVendorUser = await newVendor.save();
+
+    // Create Vendor record
+    const vendor = await Vendor.create({
+      name: `${firstName || ''} ${lastName || ''}`.trim() || 'Unnamed Vendor',
+      email: email.toLowerCase(),
+      phoneNumber,
+      address: address || '',
+      categories: Array.isArray(categories) ? categories : [],
+      businessCategory: categories && categories.length > 0 ? categories[0] : 'General', // Use first category as business category
+      businessName: businessName || companyName || `${firstName} ${lastName} Company`,
+      taxpayerIdentificationNumber: taxpayerIdentificationNumber || `TIN-${Date.now()}`, // Use provided or generate temporary
+      registrationNumber: registrationNumber || `REG-${Date.now()}`, // Use provided or generate temporary
+      companyType: companyType || "Private Limited Company",
+      formOfBusiness: formOfBusiness || "Limited Liability Company",
+      ownershipType: ownershipType || "Private Ownership",
+      countryOfRegistration: countryOfRegistration,
+      tinIssuedDate: new Date(),
+      registrationIssuedDate: new Date(),
+      registrationStatus: "approved", // Auto-approve for old method
+      termsAccepted: true,
+      termsAcceptedDate: new Date(),
+      user: requestingUser._id, // Reference to the requesting user
+      company: requestingUser.company, // Reference to the company
+      vendor: savedVendorUser._id // Reference to the vendor user account
+    });
+
+    // Create registration link
+    const registrationLink = `${process.env.FRONTEND_URL}/complete-registration?token=${encodeURIComponent(registrationToken)}&email=${encodeURIComponent(email)}`;
+
+    // Email configuration
+    const msg = {
+      to: email,
+      from: {
+        name: requestingUser.companyName || 'NexusMWI',
+        email: process.env.SENDGRID_FROM_EMAIL || 'noreply@nexusmwi.com'
+      },
+      subject: `Complete Your Registration - ${requestingUser.companyName}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 5px;">
+          <h2 style="color: #333;">Welcome to ${requestingUser.companyName}</h2>
+          <p>Dear ${firstName} ${lastName},</p>
+          <p>Your vendor account has been created by ${requestingUser.firstName} ${requestingUser.lastName}.</p>
+          <p>Please complete your registration by clicking the button below:</p>
+          <div style="margin: 20px 0; text-align: center;">
+            <a href="${registrationLink}" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">Complete Registration</a>
+          </div>
+          <p style="font-size: 12px; color: #777;">Or copy and paste this link into your browser: ${registrationLink}</p>
+          <p><strong>Important:</strong> This link expires in 24 hours.</p>
+          <p>If you didn't expect this email, please contact your administrator.</p>
+          <p>Best regards,<br/>${requestingUser.companyName} Team</p>
+        </div>
+      `,
+      text: `Welcome to ${requestingUser.companyName}\n\nDear ${firstName} ${lastName},\n\nYour vendor account has been created by ${requestingUser.firstName} ${requestingUser.lastName}.\n\nPlease complete your registration by visiting this link:\n${registrationLink}\n\nImportant: This link expires in 24 hours.\n\nIf you didn't expect this email, please ignore it.\n\nBest regards,\n${requestingUser.companyName} Team`
+    };
+
+    try {
+      // Send email via SendGrid API
+      await sgMail.send(msg);
+      console.log(`Registration email sent to ${email}`);
+      
+      // Send single success response
+      return res.status(201).json({
+        success: true,
+        message: 'Vendor created successfully. Registration email sent.',
+        code: "VENDOR_CREATED",
+        vendor: {
+          id: savedVendorUser._id,
+          vendorRecordId: vendor._id,
+          firstName,
+          lastName,
+          email,
+          status: 'pending',
+          subscriptionPlan: companySubscription.plan,
+          subscriptionEndDate: subscriptionEndDate || trialEndDate,
+          registrationTokenExpires: new Date(registrationTokenExpires)
+        },
+        meta: {
+          emailSent: true
+        }
+      });
+      
+    } catch (sendGridError) {
+      console.error('Failed to send registration email:', sendGridError);
+      
+      // Clean up the created records if email fails
+      await User.findByIdAndDelete(savedVendorUser._id);
+      await Vendor.findByIdAndDelete(vendor._id);
+      
+      return res.status(500).json({
+        success: false,
+        message: "Vendor creation failed due to email send error",
+        code: "EMAIL_SEND_FAILED",
+        error: process.env.NODE_ENV === 'development' ? sendGridError.message : undefined
+      });
+    }
+
+  } catch (err) {
+    console.error("Error adding vendor:", err);
+    return res.status(500).json({ 
+      success: false,
+      message: "Server error", 
+      error: err.message 
+    });
+  }
 };
 
 
 
-exports.getVendors = async (req, res) => {
+
+exports.getVendorsAdmin = async (req, res) => {
     try {
         const vendors = await User.find({ role: "Vendor" }).populate("firstName", "firstName email");
         res.json(vendors);
     } catch (err) {
         res.status(500).json({ message: "Server error", error: err.message });
     }
+};
+
+
+exports.getVendors = async (req, res) => {
+  try {
+    // Check authentication and get user company
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({ 
+        success: false,
+        message: "Unauthorized: User not authenticated"
+      });
+    }
+
+    // Get requesting user's company and admin status
+    const requestingUser = await User.findById(req.user._id)
+      .select('company isEnterpriseAdmin');
+    
+    if (!requestingUser) {
+      return res.status(404).json({ 
+        success: false,
+        message: "User not found" 
+      });
+    }
+    const allowedRoles = [
+    "Vendor",
+   ];
+    // Base query - filter by company unless enterprise admin requests all
+   const baseQuery = requestingUser.role === 'Enterprise(CEO, CFO, etc.)' && req.query.allCompanies === 'true'
+  ? { role: { $in: allowedRoles } }
+  : { 
+      company: requestingUser.company,
+      role: { $in: allowedRoles }
+    };
+
+
+    // Pagination parameters
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const skip = (page - 1) * limit;
+
+    // Sorting parameters
+    const sortField = req.query.sortBy || 'lastName';
+    const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
+    const sort = { [sortField]: sortOrder };
+
+    // Filter parameters
+    const statusFilter = req.query.status 
+      ? { status: req.query.status } 
+      : {};
+
+    // Search parameter
+    const searchQuery = req.query.search
+      ? {
+          $or: [
+            { firstName: { $regex: req.query.search, $options: 'i' } },
+            { lastName: { $regex: req.query.search, $options: 'i' } },
+            { email: { $regex: req.query.search, $options: 'i' } },
+            { employeeId: { $regex: req.query.search, $options: 'i' } }
+          ]
+        }
+      : {};
+
+    // Combine all query conditions
+    const query = {
+      ...baseQuery,
+      ...statusFilter,
+      ...searchQuery
+    };
+
+    // Get vendors with pagination and sorting
+    const vendors = await User.find(query)
+      .select('-password -verificationCode -refreshToken')
+      .populate({
+        path: 'company',
+        select: 'name industry'
+      })
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    // Get total count for pagination
+    const totalCount = await User.countDocuments(query);
+
+    // Get status counts
+    const statusCounts = await User.aggregate([
+      { $match: baseQuery },
+      { $group: {
+          _id: '$status',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Convert status counts to object
+    const statusStats = statusCounts.reduce((acc, curr) => {
+      acc[curr._id] = curr.count;
+      return acc;
+    }, {});
+
+    console.log(`Fetched ${vendors.length} vendors from company ${requestingUser.company}`);
+
+    res.status(200).json({
+      success: true,
+      data: vendors,
+      meta: {
+        total: totalCount,
+        page,
+        limit,
+        totalPages: Math.ceil(totalCount / limit),
+        statusStats,
+        sort: `${sortField}:${sortOrder === 1 ? 'asc' : 'desc'}`,
+        filters: {
+          search: req.query.search || null,
+          status: req.query.status || null
+        },
+        context: {
+          isEnterpriseAdmin: requestingUser.isEnterpriseAdmin,
+          allCompanies: req.query.allCompanies === 'true'
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching vendors:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error while fetching vendors',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
 };
 
 exports.updateVendor = async (req, res) => {
