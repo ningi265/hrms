@@ -1243,7 +1243,8 @@ exports.login = async (req, res) => {
       console.log('Looking for user with email:', email);
       
       // Explicitly select the password field
-      const user = await User.findOne({ email }).select('+password');
+      const user = await User.findOne({ email }).select('+password +isEnterpriseAdmin +company');
+
       
       console.log('User found:', !!user);
       
@@ -1295,7 +1296,12 @@ exports.login = async (req, res) => {
       user.password = undefined;
       
       console.log('Sending response...');
-      res.status(200).json({ token, user });
+      res.status(200).json({ token,  user: {
+        // Include all necessary fields
+        ...user.toObject(),
+        isEnterpriseAdmin: user.isEnterpriseAdmin,
+        company: user.company
+      } });
       
   } catch (err) {
       console.error('Login error:', err);

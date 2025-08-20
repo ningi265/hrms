@@ -5,6 +5,13 @@ const TravelRequest = require("../../models/travel");
 const { protect }=require("../../api/middleware/authMiddleware");
 const { sendNotifications } = require('../../api/services/notificationService');
 const User = require("../../models/user");
+const Notification = require("../../models/notification");
+const { format } = require('date-fns');
+
+
+
+const sgMail = require('@sendgrid/mail');
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 
 
@@ -1338,7 +1345,8 @@ exports.travelRequest = async (req, res) => {
         duration: durationInDays, // Calculated field
         location,
         destination: travelType === 'international' ? destination : undefined,
-        fundingCodes: fundingCodes || [],
+      fundingCodes: fundingCodes,
+
         meansOfTravel,
         travelType: travelType || 'local', // Default to local if not specified
         currency: travelType === 'international' ? currency : 'MWK',
@@ -1494,7 +1502,7 @@ exports.getPendingRequestsAll = async (req, res) => {
       const travelRequests = await TravelRequest.find({ 
           supervisorApproval: "pending" 
       })
-      .populate("employee", "name email")
+      .populate("employee", "firstName lastName email")
       .populate("supervisor", "name email")
       .exec();
 
@@ -1507,6 +1515,8 @@ exports.getPendingRequestsAll = async (req, res) => {
       });
   }
 };
+
+
 exports.getFinanceProcessedRequestsUser = async (req, res) => {
   try {
     if (!req.user?._id) {
@@ -1562,7 +1572,7 @@ exports.getSupervisorApprovedRequests = async (req, res) => {
     const supervisorApprovedRequests = await TravelRequest.find({
       supervisorApproval: "approved",
       finalApproval: "pending",
-    }).populate("employee", "name"); // Populate employee details if needed
+    }).populate("employee", "firstName lastName email"); 
 
     res.status(200).json(supervisorApprovedRequests);
   } catch (error) {
@@ -1714,9 +1724,22 @@ exports.getFinanceProcessedRequests = async (req, res) => {
 exports.financeProcess = async (req, res) => {
   try {
     const { id } = req.params;
-    const { amount, currency, processingFee, totalAmount,perDiemAmount } = req.body;
-    console.log(req.body);
+    const { amount, currency, processingFee, totalAmount, transferDate } = req.body;
     
+    // Validate required fields
+    if (!amount || !currency || !totalAmount) {
+      return res.status(400).json({ 
+        message: "Missing required fields: amount, currency, and totalAmount are required" 
+      });
+    }
+
+    // Validate currency format (example: must be 3 letters)
+    if (typeof currency !== 'string' || currency.length !== 3) {
+      return res.status(400).json({ 
+        message: "Invalid currency format. Must be 3-letter currency code (e.g., USD, EUR)" 
+      });
+    }
+
     const travelRequest = await TravelRequest.findById(id);
     if (!travelRequest) {
       return res.status(404).json({ message: "Travel request not found" });
@@ -1726,31 +1749,50 @@ exports.financeProcess = async (req, res) => {
       return res.status(400).json({ message: "Request not finally approved" });
     }
 
+    // Temporary workaround for fleetNotification validation issue
+    // This assumes you want to keep the existing fleetNotification data
+    const fleetNotification = travelRequest.fleetNotification || {};
+    
     // Create or update payment object with all details
-    travelRequest.payment = {
+    const payment = {
       ...travelRequest.payment, // Keep existing payment data if any
       processedBy: req.user._id,
       processedAt: new Date(),
-      perDiemAmount: amount, // Store the per diem amount in payment
+      perDiemAmount: amount,
       totalAmount: totalAmount,
-      paymentMethod: "bank transfer" // or whatever method you're using
+      processingFee: processingFee || 0,
+      transferDate: transferDate ? new Date(transferDate) : new Date(),
+      paymentMethod: "bank transfer",
+      currency: currency
     };
 
-    travelRequest.financeStatus = "processed";
-    travelRequest.currency = currency; // Make sure currency is saved
-    
-    await travelRequest.save();
+    // Update the travel request
+    const updatedRequest = await TravelRequest.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          payment: payment,
+          financeStatus: "processed",
+          currency: currency,
+          fleetNotification: fleetNotification // Preserve existing fleetNotification
+        }
+      },
+      { new: true, runValidators: false } // Temporarily disable validators
+    );
 
-    console.log(`Processed payment of $${amount} ${currency} for ${travelRequest.employee._id}`);
+    console.log(`Processed payment of ${amount} ${currency} for ${travelRequest.employee._id}`);
 
     res.status(200).json({
       message: "Finance processing completed",
       perDiemAmount: amount,
-      travelRequest
+      travelRequest: updatedRequest
     });
   } catch (error) {
     console.error("Error in finance processing:", error);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ 
+      message: "Server error",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 
@@ -2569,3 +2611,128 @@ exports.processReconciliation = async (req, res) => {
 };
 
 
+exports.sendTravelNotification = async (req, res) => {
+  console.log(req.body);
+  console.log(req.params);
+  try {
+    const { id } = req.params;
+    const { 
+      recipient, 
+      subject, 
+      message, 
+      includeBreakdown, 
+      sendCopy,
+      amount,
+      currency 
+    } = req.body;
+
+    // Validate required fields
+    if (!recipient || !subject || !message) {
+      return res.status(400).json({ 
+        message: "Recipient, subject, and message are required"
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(recipient)) {
+      return res.status(400).json({ 
+        message: "Invalid recipient email format"
+      });
+    }
+
+    const travelRequest = await TravelRequest.findById(id).populate('employee');
+    if (!travelRequest) {
+      return res.status(404).json({ message: "Travel request not found" });
+    }
+
+    if (!process.env.SENDGRID_API_KEY) {
+      return res.status(500).json({ 
+        message: "Email service not configured properly"
+      });
+    }
+
+    // Prepare email content with proper validation
+    const emailContent = {
+      to: recipient.trim(),
+      from: {
+        name: 'NexusMWI Finance',
+        email: process.env.SENDGRID_FROM_EMAIL || 'finance@nexusmwi.com'
+      },
+      subject: subject.substring(0, 78), // Truncate to 78 chars (SendGrid limit)
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 5px;">
+          <h2 style="color: #333;">${subject.substring(0, 78)}</h2>
+          <p>${message.replace(/\n/g, '<br>').substring(0, 10000)}</p>
+          ${includeBreakdown ? `
+            <div style="margin-top: 20px; padding: 15px; background-color: #f5f5f5; border-radius: 8px;">
+              <h3 style="margin-top: 0;">Payment Details</h3>
+              <p><strong>Amount:</strong> ${formatCurrency(amount, currency)}</p>
+              <p><strong>Destination:</strong> ${travelRequest.city}, ${travelRequest.country}</p>
+              <p><strong>Travel Dates:</strong> ${format(travelRequest.departureDate, 'MMM d, yyyy')} - ${format(travelRequest.returnDate, 'MMM d, yyyy')}</p>
+            </div>
+          ` : ''}
+          <p style="margin-top: 30px; font-size: 12px; color: #666;">
+            This is an automated message from NexusMWI Travel System
+          </p>
+        </div>
+      `,
+      text: `${subject.substring(0, 78)}\n\n${message.substring(0, 10000)}\n\n` + 
+        (includeBreakdown ? 
+          `Payment Details:\nAmount: ${formatCurrency(amount, currency)}\n` +
+          `Destination: ${travelRequest.city}, ${travelRequest.country}\n` +
+          `Travel Dates: ${format(travelRequest.departureDate, 'MMM d, yyyy')} - ${format(travelRequest.returnDate, 'MMM d, yyyy')}\n\n` : '') +
+        `This is an automated message from NexusMWI Travel System`
+    };
+
+    // Add CC if requested
+    if (sendCopy) {
+      const financeEmail = process.env.FINANCE_TEAM_EMAIL || 'finance@nexusmwi.com';
+      if (emailRegex.test(financeEmail)) {
+        emailContent.cc = financeEmail;
+      }
+    }
+
+    // Debug log before sending
+    console.log('Sending email with content:', {
+      to: emailContent.to,
+      subject: emailContent.subject,
+      text_length: emailContent.text?.length,
+      html_length: emailContent.html?.length
+    });
+
+    // Send email via SendGrid API
+    await sgMail.send(emailContent);
+    
+    // Update travel request status
+    travelRequest.financeStatus = "completed";
+    travelRequest.transferredAt = new Date();
+    await travelRequest.save();
+
+    res.status(200).json({ 
+      message: "Travel notification sent successfully"
+    });
+
+  } catch (error) {
+    console.error("Detailed SendGrid error:", {
+      message: error.message,
+      code: error.code,
+      response: error.response?.body
+    });
+    
+    res.status(500).json({ 
+      message: "Failed to send travel notification",
+      details: error.response?.body?.errors || error.message
+    });
+  }
+};
+
+
+function formatCurrency(amount, currency) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currency || 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(amount);
+}

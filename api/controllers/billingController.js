@@ -29,15 +29,27 @@ exports.getPlans = async (req, res) => {
 // Create checkout session for subscription  
 exports.createCheckoutSession = async (req, res) => {
   try {
-    const { planName, priceId, isAnnual } = req.body;
+    const { planName, priceId, isAnnual, isTrial, isCompany } = req.body;
     const userId = req.user._id;
-    const user = await User.findById(userId);
-    
-    console.log('Checkout request:', { planName, priceId, isAnnual, userId });
-    
+    const user = await User.findById(userId).select('isEnterpriseAdmin company isCompany email firstName lastName companyName billing');
+
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
+
+    // Determine if this is a company account
+    const isCompanyAccount = typeof isCompany !== 'undefined' 
+      ? isCompany 
+      : user.isEnterpriseAdmin || user.isCompany;
+
+    console.log('Checkout request:', { 
+      planName, 
+      priceId, 
+      isAnnual, 
+      userId,
+      isCompany: isCompanyAccount,
+      userIsEnterpriseAdmin: user.isEnterpriseAdmin,
+    });
 
     // Define pricing configuration with environment variables
     const pricingConfig = {
@@ -99,7 +111,6 @@ exports.createCheckoutSession = async (req, res) => {
 
     // Create Stripe customer if not exists
     let stripeCustomerId = user.billing?.stripeCustomerId;
-    
     if (!stripeCustomerId) {
       console.log('Creating new Stripe customer for user:', userId);
       const customer = await stripe.customers.create({
@@ -107,7 +118,8 @@ exports.createCheckoutSession = async (req, res) => {
         name: `${user.firstName} ${user.lastName}`,
         metadata: {
           userId: userId.toString(),
-          companyName: user.companyName || ''
+          companyName: user.companyName || '',
+          isCompany: isCompanyAccount ? 'true' : 'false'
         }
       });
       
@@ -116,7 +128,8 @@ exports.createCheckoutSession = async (req, res) => {
       
       // Save Stripe customer ID to user
       await User.findByIdAndUpdate(userId, {
-        'billing.stripeCustomerId': stripeCustomerId
+        'billing.stripeCustomerId': stripeCustomerId,
+        'isCompany': isCompanyAccount
       });
     }
 
@@ -126,14 +139,14 @@ exports.createCheckoutSession = async (req, res) => {
       metadata: {
         planName,
         billingCycle,
-        userId: userId.toString()
+        userId: userId.toString(),
+        isCompany: isCompanyAccount ? 'true' : 'false'
       }
     };
 
     // Only add trial_period_days if user is not already on trial
-    // If user is on trial, start subscription immediately without additional trial
     if (!isUserOnTrial) {
-      subscriptionData.trial_period_days = 14; // Give new users 14 day trial
+      subscriptionData.trial_period_days = 14;
     }
 
     // Create Stripe checkout session
@@ -156,7 +169,8 @@ exports.createCheckoutSession = async (req, res) => {
       metadata: {
         planName,
         billingCycle,
-        userId: userId.toString()
+        userId: userId.toString(),
+        isCompany: isCompanyAccount ? 'true' : 'false'
       },
       subscription_data: subscriptionData
     });
@@ -166,42 +180,19 @@ exports.createCheckoutSession = async (req, res) => {
       userId,
       planName,
       billingCycle,
-      stripePriceId
+      stripePriceId,
+      isCompany: isCompanyAccount
     });
 
     res.json({ 
       url: session.url,
       sessionId: session.id
     });
-
   } catch (error) {
     console.error('Error creating checkout session:', error);
     
-    // Provide specific error messages based on error type
-    let errorMessage = 'Failed to create checkout session';
-    let errorDetails = {};
-    
-    if (error.type === 'StripeInvalidRequestError') {
-      if (error.code === 'resource_missing') {
-        errorMessage = 'Invalid Stripe price ID. Please check your Stripe dashboard configuration.';
-        errorDetails = {
-          hint: 'Make sure you are using a price ID (starts with "price_"), not a product ID (starts with "prod_")',
-          providedId: req.body.priceId,
-          stripeError: error.message
-        };
-      } else if (error.param === 'subscription_data[trial_period_days]') {
-        errorMessage = 'Trial period configuration error';
-        errorDetails = {
-          hint: 'Trial period days must be 1 or greater, or omitted entirely',
-          stripeError: error.message
-        };
-      }
-    }
-    
     res.status(500).json({ 
-      message: errorMessage,
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-      details: process.env.NODE_ENV === 'development' ? errorDetails : undefined
+      message: 'Failed to create checkout session'
     });
   }
 };
@@ -241,16 +232,28 @@ exports.handleCheckoutSuccess = async (req, res) => {
         cancelAtPeriodEnd: subscription.cancel_at_period_end
       },
       'billing.stripeCustomerId': session.customer.id,
-      // Set usage limits based on plan
       'usage.storage.limit': getStorageLimitForPlan(planName),
       'usage.apiCallLimit': getApiCallLimitForPlan(planName)
-    }, { new: true });
+    }, { new: true }).select('company isCompany billing');
 
     console.log('Subscription activated for user:', {
       userId,
       planName,
-      subscriptionId: subscription.id
+      subscriptionId: subscription.id,
+      isCompany: updatedUser.isCompany
     });
+
+    // If this is a company account, update all employees
+    if (updatedUser.isCompany) {
+      console.log('🏢 Detected company account - updating employees');
+      await updateCompanyAccounts(updatedUser.company, { // ✅ FIXED
+        status: subscription.status,
+        plan: planName,
+        currentPeriodStart: new Date(subscription.current_period_start * 1000),
+        currentPeriodEnd: new Date(subscription.current_period_end * 1000),
+        cancelAtPeriodEnd: subscription.cancel_at_period_end
+      });
+    }
 
     res.json({
       success: true,
@@ -261,78 +264,46 @@ exports.handleCheckoutSuccess = async (req, res) => {
   } catch (error) {
     console.error('Error handling checkout success:', error);
     res.status(500).json({ 
-      message: 'Failed to process successful checkout',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      message: 'Failed to process successful checkout'
     });
   }
 };
 
-// Helper functions for plan limits
-function getStorageLimitForPlan(planName) {
-  const limits = {
-    starter: 1000, // 1GB
-    professional: 10000, // 10GB
-    enterprise: 100000 // 100GB
-  };
-  return limits[planName] || 1000;
-}
 
-function getApiCallLimitForPlan(planName) {
-  const limits = {
-    starter: 10000,
-    professional: 100000,
-    enterprise: 1000000
-  };
-  return limits[planName] || 10000;
-}
-
-// Handle Stripe webhooks with comprehensive logging and error handling
+// Webhook handler
 exports.handleWebhook = async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
 
   console.log('📥 Webhook received at:', new Date().toISOString());
-  console.log('📋 Headers:', {
-    'content-type': req.headers['content-type'],
-    'stripe-signature': sig ? 'present' : 'missing'
-  });
 
   try {
-    // Verify webhook signature
     event = stripe.webhooks.constructEvent(
       req.body,
       sig,
       process.env.STRIPE_WEBHOOK_SECRET
     );
     console.log('✅ Webhook signature verified - Event type:', event.type);
-    console.log('🆔 Event ID:', event.id);
   } catch (err) {
     console.error('❌ Webhook signature verification failed:', err.message);
-    console.error('🔍 Webhook secret configured:', !!process.env.STRIPE_WEBHOOK_SECRET);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // Handle the event
   try {
     switch (event.type) {
       case 'checkout.session.completed':
-        console.log('🎉 Processing checkout session completed');
         await handleCheckoutCompleted(event.data.object);
         break;
       case 'invoice.payment_succeeded':
-        console.log('💰 Processing payment succeeded');
         await handlePaymentSucceeded(event.data.object);
         break;
       case 'invoice.payment_failed':
-        console.log('❌ Processing payment failed');
         await handlePaymentFailed(event.data.object);
         break;
       case 'customer.subscription.updated':
-        console.log('🔄 Processing subscription updated');
         await handleSubscriptionUpdated(event.data.object);
         break;
       case 'customer.subscription.deleted':
-        console.log('🗑️ Processing subscription deleted');
         await handleSubscriptionDeleted(event.data.object);
         break;
       default:
@@ -345,13 +316,11 @@ exports.handleWebhook = async (req, res) => {
     console.error('❌ Error processing webhook:', error);
     res.status(500).json({ 
       error: 'Webhook processing failed',
-      eventType: event.type,
-      eventId: event.id 
+      eventType: event.type
     });
   }
 };
 
-// Helper functions for webhook handling
 async function handleCheckoutCompleted(session) {
   console.log('🎉 Processing checkout completion for session:', session.id);
   
@@ -359,54 +328,23 @@ async function handleCheckoutCompleted(session) {
     const userId = session.client_reference_id;
     const planName = session.metadata?.planName;
     const billingCycle = session.metadata?.billingCycle;
+    const isCompanyAccount = session.metadata?.isCompany === 'true';
     
-    console.log('📋 Session metadata:', {
-      userId,
-      planName,
-      billingCycle,
-      customerId: session.customer,
-      subscriptionId: session.subscription
-    });
-
     if (!userId || !planName) {
       console.error('❌ Missing required metadata in checkout session');
       return;
     }
 
-    // Get full subscription details from Stripe
+    const user = await User.findById(userId).select('isCompany employees email firstName lastName companyName company');
+    if (!user) {
+      console.error('❌ User not found with ID:', userId);
+      return;
+    }
+
     const subscription = await stripe.subscriptions.retrieve(session.subscription, {
       expand: ['items.data.price.product']
     });
     
-    console.log('📋 Subscription details:', {
-      id: subscription.id,
-      status: subscription.status,
-      currentPeriodStart: subscription.current_period_start,
-      currentPeriodEnd: subscription.current_period_end,
-      trialEnd: subscription.trial_end
-    });
-
-    // Safe date conversion function
-    const convertUnixToDate = (unixTimestamp) => {
-      if (!unixTimestamp || isNaN(unixTimestamp)) {
-        return null;
-      }
-      const date = new Date(unixTimestamp * 1000);
-      return isNaN(date.getTime()) ? null : date;
-    };
-
-    // Convert dates safely
-    const currentPeriodStart = convertUnixToDate(subscription.current_period_start);
-    const currentPeriodEnd = convertUnixToDate(subscription.current_period_end);
-    const trialEnd = convertUnixToDate(subscription.trial_end);
-
-    console.log('📅 Converted dates:', {
-      currentPeriodStart,
-      currentPeriodEnd,
-      trialEnd
-    });
-
-    // Build update object with safe date handling
     const updateData = {
       'billing.subscription.plan': planName,
       'billing.subscription.status': subscription.status,
@@ -414,141 +352,313 @@ async function handleCheckoutCompleted(session) {
       'billing.subscription.priceId': subscription.items.data[0].price.id,
       'billing.subscription.cancelAtPeriodEnd': subscription.cancel_at_period_end || false,
       'billing.stripeCustomerId': session.customer,
-      // Update usage limits based on plan
       'usage.storage.limit': getStorageLimitForPlan(planName),
-      'usage.apiCallLimit': getApiCallLimitForPlan(planName)
+      'usage.apiCallLimit': getApiCallLimitForPlan(planName),
+      'isCompany': isCompanyAccount
     };
 
-    // Only add dates if they're valid
-    if (currentPeriodStart) {
-      updateData['billing.subscription.currentPeriodStart'] = currentPeriodStart;
-    }
-    if (currentPeriodEnd) {
-      updateData['billing.subscription.currentPeriodEnd'] = currentPeriodEnd;
-    }
-    if (trialEnd) {
-      updateData['billing.trialEndDate'] = trialEnd;
-    }
-
-    console.log('💾 Update data being sent to database:', updateData);
-
-    const updatedUser = await User.findByIdAndUpdate(userId, updateData, { 
+    const updatedAccount = await User.findByIdAndUpdate(userId, updateData, { 
       new: true,
-      select: 'billing usage firstName lastName email'
+      select: 'isCompany companyName employees company'
     });
 
-    if (updatedUser) {
-      console.log('✅ User subscription activated:', {
-        userId,
-        userEmail: updatedUser.email,
-        plan: planName,
-        subscriptionId: subscription.id,
-        status: subscription.status
-      });
-    } else {
-      console.error('❌ User not found with ID:', userId);
+    console.log('✅ Account subscription activated:', {
+      userId,
+      plan: planName,
+      subscriptionId: subscription.id,
+      status: subscription.status,
+      isCompany: isCompanyAccount,
+      companyName: updatedAccount.companyName
+    });
+
+    if (isCompanyAccount) {
+      console.log('🏢 COMPANY ACCOUNT DETECTED - Starting employee updates');
+      const updateResult = await updateCompanyAccounts(
+        updatedAccount.company, // ✅ FIXED
+        {
+          status: subscription.status,
+          plan: planName,
+          isTrial: subscription.status === 'trialing',
+          storageLimit: getStorageLimitForPlan(planName),
+          apiCallLimit: getApiCallLimitForPlan(planName),
+          isCompany: true
+        }
+      );
+      console.log(`🔄 COMPANY UPDATE RESULT: ${updateResult.totalUpdated} employees updated`);
     }
-  } catch (error) {
-    console.error('❌ Error handling checkout completion:', error);
-    throw error; // Re-throw to trigger webhook retry
+  }
+  catch (error) {
+    console.error('❌ Error processing checkout completion:', error);         
+    throw error;
   }
 }
 
+// Enhanced company account updater
+async function updateCompanyAccounts(companyId, updateData) {
+  console.log('🚀 Starting company account update for companyId:', companyId);
+
+  try {
+    // Prepare update payload
+    const updatePayload = {
+      'billing.subscription.status': updateData.status,
+      'billing.subscription.plan': updateData.plan,
+      'billing.subscription.isTrial': updateData.isTrial || false,
+      'billing.lastSyncedAt': new Date(),
+      'usage.storage.limit': updateData.storageLimit || getStorageLimitForPlan(updateData.plan),
+      'usage.apiCallLimit': updateData.apiCallLimit || getApiCallLimitForPlan(updateData.plan)
+    };
+
+    if (updateData.currentPeriodStart) {
+      updatePayload['billing.subscription.currentPeriodStart'] = updateData.currentPeriodStart;
+    }
+    if (updateData.currentPeriodEnd) {
+      updatePayload['billing.subscription.currentPeriodEnd'] = updateData.currentPeriodEnd;
+    }
+    if (updateData.trialEnd) {
+      updatePayload['billing.subscription.trialEnd'] = updateData.trialEnd;
+    }
+
+    // Find employees by company field
+    const employees = await User.find({
+      company: companyId,
+      isEnterpriseAdmin: false
+    }).select('_id email firstName lastName');
+
+    console.log(`👥 FOUND ${employees.length} EMPLOYEES TO UPDATE for companyId: ${companyId}`);
+
+    if (employees.length === 0) {
+      console.log('ℹ️ No employees found for this company');
+      return { success: true, totalUpdated: 0 };
+    }
+
+    // Batch update employees
+    const BATCH_SIZE = 100;
+    let totalUpdated = 0;
+    let batchNumber = 1;
+
+    while (totalUpdated < employees.length) {
+      const batch = employees.slice(totalUpdated, totalUpdated + BATCH_SIZE);
+      const result = await User.updateMany(
+        { _id: { $in: batch.map(e => e._id) } },
+        { $set: updatePayload }
+      );
+
+      totalUpdated += result.modifiedCount;
+      console.log(`✅ BATCH #${batchNumber} COMPLETE - Updated ${result.modifiedCount} employees`);
+      batchNumber++;
+    }
+
+    console.log(`🎉 COMPANY UPDATE COMPLETE - Total employees updated: ${totalUpdated}`);
+    return { success: true, totalUpdated };
+  } catch (error) {
+    console.error(`❌ COMPANY UPDATE FAILED - Company ID: ${companyId}`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+
+// Handle successful payment
 async function handlePaymentSucceeded(invoice) {
   try {
     const subscriptionId = invoice.subscription;
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
     
-    const updateResult = await User.findOneAndUpdate(
-      { 'billing.subscription.subscriptionId': subscriptionId },
-      {
-        'billing.subscription.status': subscription.status,
-        'billing.subscription.currentPeriodStart': new Date(subscription.current_period_start * 1000),
-        'billing.subscription.currentPeriodEnd': new Date(subscription.current_period_end * 1000),
-        $push: {
-          'billing.invoices': {
-            id: invoice.id,
-            amount: invoice.amount_paid,
-            currency: invoice.currency,
-            status: invoice.status,
-            pdfUrl: invoice.invoice_pdf,
-            createdAt: new Date(invoice.created * 1000)
-          }
-        }
-      },
-      { new: true }
-    );
+    const account = await User.findOne({ 
+      'billing.subscription.subscriptionId': subscriptionId 
+    }).select('isCompany company');
 
-    console.log(`Payment succeeded for subscription ${subscriptionId}`);
+    if (!account) {
+      console.error(`❌ No account found with subscription ${subscriptionId}`);
+      return;
+    }
+
+    const invoiceData = {
+      id: invoice.id,
+      amount: invoice.amount_paid,
+      currency: invoice.currency,
+      status: invoice.status,
+      pdfUrl: invoice.invoice_pdf,
+      createdAt: new Date(invoice.created * 1000)
+    };
+
+    const updateData = {
+      'billing.subscription.status': subscription.status,
+      $push: { 'billing.invoices': invoiceData }
+    };
+
+    const currentPeriodStart = new Date(subscription.current_period_start * 1000);
+    const currentPeriodEnd = new Date(subscription.current_period_end * 1000);
+    
+    updateData['billing.subscription.currentPeriodStart'] = currentPeriodStart;
+    updateData['billing.subscription.currentPeriodEnd'] = currentPeriodEnd;
+
+    await User.findByIdAndUpdate(account._id, updateData);
+
+    if (account.isCompany) {
+      console.log('🏢 COMPANY ACCOUNT DETECTED - Starting employee updates');
+      const companyUpdateData = {
+        status: subscription.status,
+        currentPeriodStart,
+        currentPeriodEnd
+      };
+      await updateCompanyAccounts(account.company, companyUpdateData); // ✅ FIXED
+    }
   } catch (error) {
-    console.error('Error handling payment succeeded:', error);
+    console.error('❌ PAYMENT PROCESSING FAILED:', error);
+    throw error;
   }
 }
 
+// Handle failed payment
 async function handlePaymentFailed(invoice) {
   try {
     const subscriptionId = invoice.subscription;
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
     
-    await User.findOneAndUpdate(
-      { 'billing.subscription.subscriptionId': subscriptionId },
-      { 'billing.subscription.status': 'past_due' }
-    );
+    const account = await User.findOne({ 
+      'billing.subscription.subscriptionId': subscriptionId 
+    }).select('isCompany company');
 
-    console.log(`Payment failed for subscription ${subscriptionId}`);
+    if (!account) {
+      console.error(`❌ No account found with subscription ${subscriptionId}`);
+      return;
+    }
+
+    await User.findByIdAndUpdate(account._id, {
+      'billing.subscription.status': 'past_due',
+      $push: {
+        'billing.paymentFailures': {
+          invoiceId: invoice.id,
+          amount: invoice.amount_due,
+          currency: invoice.currency,
+          attemptCount: invoice.attempt_count,
+          nextPaymentAttempt: invoice.next_payment_attempt ? 
+            new Date(invoice.next_payment_attempt * 1000) : null,
+          createdAt: new Date(invoice.created * 1000)
+        }
+      }
+    });
+
+    if (account.isCompany) {
+      console.log('🏢 Detected company account - updating all employees');
+      await updateCompanyAccounts(account.company, { status: 'past_due' }); // ✅ FIXED
+    }
   } catch (error) {
-    console.error('Error handling payment failed:', error);
+    console.error('❌ Error handling payment failed:', error);
+    throw error;
   }
 }
 
+// Handle subscription updates
 async function handleSubscriptionUpdated(subscription) {
   try {
-    await User.findOneAndUpdate(
-      { 'billing.subscription.subscriptionId': subscription.id },
-      {
-        'billing.subscription.status': subscription.status,
-        'billing.subscription.currentPeriodStart': new Date(subscription.current_period_start * 1000),
-        'billing.subscription.currentPeriodEnd': new Date(subscription.current_period_end * 1000),
-        'billing.subscription.cancelAtPeriodEnd': subscription.cancel_at_period_end
-      }
-    );
+    const account = await User.findOne({ 
+      'billing.subscription.subscriptionId': subscription.id 
+    }).select('isCompany company');
 
-    console.log(`Subscription updated: ${subscription.id}`);
+    if (!account) {
+      console.error(`❌ No account found with subscription ${subscription.id}`);
+      return;
+    }
+
+    const updateData = {
+      'billing.subscription.status': subscription.status,
+      'billing.subscription.currentPeriodStart': new Date(subscription.current_period_start * 1000),
+      'billing.subscription.currentPeriodEnd': new Date(subscription.current_period_end * 1000),
+      'billing.subscription.cancelAtPeriodEnd': subscription.cancel_at_period_end,
+      'billing.subscription.plan': getPlanFromSubscription(subscription)
+    };
+
+    await User.findByIdAndUpdate(account._id, updateData);
+
+    if (account.isCompany) {
+      console.log('🏢 Detected company account - updating all employees');
+      await updateCompanyAccounts(account.company, { // ✅ FIXED
+        status: subscription.status,
+        currentPeriodStart: new Date(subscription.current_period_start * 1000),
+        currentPeriodEnd: new Date(subscription.current_period_end * 1000),
+        cancelAtPeriodEnd: subscription.cancel_at_period_end,
+        plan: getPlanFromSubscription(subscription)
+      });
+    }
   } catch (error) {
-    console.error('Error handling subscription updated:', error);
+    console.error('❌ Error handling subscription updated:', error);
+    throw error;
   }
 }
 
+// Handle subscription deletion
 async function handleSubscriptionDeleted(subscription) {
   try {
-    await User.findOneAndUpdate(
-      { 'billing.subscription.subscriptionId': subscription.id },
-      { 
-        'billing.subscription.status': 'canceled',
-        'billing.subscription.cancelAtPeriodEnd': true
-      }
-    );
+    const account = await User.findOne({ 
+      'billing.subscription.subscriptionId': subscription.id 
+    }).select('isCompany company');
 
-    console.log(`Subscription deleted: ${subscription.id}`);
+    if (!account) {
+      console.error(`❌ No account found with subscription ${subscription.id}`);
+      return;
+    }
+
+    const updateData = {
+      'billing.subscription.status': 'canceled',
+      'billing.subscription.cancelAtPeriodEnd': true,
+      'billing.subscription.endedAt': new Date()
+    };
+
+    await User.findByIdAndUpdate(account._id, updateData);
+
+    if (account.isCompany) {
+      console.log('🏢 Detected company account - updating all employees');
+      await updateCompanyAccounts(account.company, { // ✅ FIXED
+        status: 'canceled',
+        cancelAtPeriodEnd: true
+      });
+    }
   } catch (error) {
-    console.error('Error handling subscription deleted:', error);
+    console.error('❌ Error handling subscription deleted:', error);
+    throw error;
   }
 }
 
-// Get current user's subscription
+function getPlanFromSubscription(subscription) {
+  try {
+    return subscription.items.data[0].price.product.name;
+  } catch {
+    return null;
+  }
+}
+
+// Storage limits
+function getStorageLimitForPlan(plan) {
+  const planLimits = {
+    enterprise: 10240,
+    professional: 5120,
+    starter: 100
+  };
+  return planLimits[plan?.toLowerCase()] || 100;
+}
+
+function getApiCallLimitForPlan(plan) {
+  const planLimits = {
+    enterprise: 1000000,
+    professional: 100000,
+    starter: 10000
+  };
+  return planLimits[plan?.toLowerCase()] || 10000;
+}
+
 exports.getUserSubscription = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id) // Changed from req.user._id to req.user.id
-      .select('billing usage');
+    const user = await User.findById(req.user._id)
+      .select('billing usage isCompany');
     
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Calculate trial status
     const trialActive = user.isOnTrial();
     const trialDaysRemaining = user.getRemainingTrialDays();
     
-
     res.json({
       subscription: user.billing?.subscription || {
         plan: 'trial',
@@ -562,7 +672,8 @@ exports.getUserSubscription = async (req, res) => {
       usage: user.usage || {
         apiCalls: { count: 0, lastReset: new Date() },
         storage: { used: 0, limit: 100 }
-      }
+      },
+      isCompany: user.isCompany || false
     });
   } catch (error) {
     console.error('Error getting user subscription:', error);
@@ -570,10 +681,9 @@ exports.getUserSubscription = async (req, res) => {
   }
 };
 
-// Cancel subscription
 exports.cancelSubscription = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id); // Changed from req.user._id to req.user.id
+    const user = await User.findById(req.user._id).select('billing isCompany company');
     
     if (!user.billing?.subscription?.subscriptionId) {
       return res.status(400).json({ message: 'No active subscription found' });
@@ -584,10 +694,18 @@ exports.cancelSubscription = async (req, res) => {
       { cancel_at_period_end: true }
     );
 
-    await User.findByIdAndUpdate(req.user.id, { // Changed from req.user._id to req.user.id
+    await User.findByIdAndUpdate(req.user._id, {
       'billing.subscription.cancelAtPeriodEnd': true,
       'billing.subscription.status': subscription.status
     });
+
+    if (user.isCompany) {
+      console.log('🏢 Detected company account - updating employees');
+      await updateCompanyAccounts(user.company, { // ✅ FIXED
+        status: subscription.status,
+        cancelAtPeriodEnd: true
+      });
+    }
 
     res.json({ 
       message: 'Subscription will cancel at the end of the current period',
@@ -599,10 +717,9 @@ exports.cancelSubscription = async (req, res) => {
   }
 };
 
-// Reactivate subscription
 exports.reactivateSubscription = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id); // Changed from req.user._id to req.user.id
+    const user = await User.findById(req.user._id).select('billing isCompany company');
     
     if (!user.billing?.subscription?.subscriptionId) {
       return res.status(400).json({ message: 'No subscription found' });
@@ -613,10 +730,18 @@ exports.reactivateSubscription = async (req, res) => {
       { cancel_at_period_end: false }
     );
 
-    await User.findByIdAndUpdate(req.user.id, { // Changed from req.user._id to req.user.id
+    await User.findByIdAndUpdate(req.user._id, {
       'billing.subscription.cancelAtPeriodEnd': false,
       'billing.subscription.status': subscription.status
     });
+
+    if (user.isCompany) {
+      console.log('🏢 Detected company account - updating employees');
+      await updateCompanyAccounts(user.company, { // ✅ FIXED
+        status: subscription.status,
+        cancelAtPeriodEnd: false
+      });
+    }
 
     res.json({ message: 'Subscription reactivated successfully' });
   } catch (error) {
@@ -625,10 +750,9 @@ exports.reactivateSubscription = async (req, res) => {
   }
 };
 
-// Get billing history
 exports.getBillingHistory = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('billing'); // Changed from req.user._id to req.user.id
+    const user = await User.findById(req.user._id).select('billing');
     
     if (!user || !user.billing?.invoices) {
       return res.json({ invoices: [] });
@@ -643,16 +767,14 @@ exports.getBillingHistory = async (req, res) => {
   }
 };
 
-// Update payment method
 exports.updatePaymentMethod = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id); // Changed from req.user._id to req.user.id
+    const user = await User.findById(req.user._id).select('billing');
     
     if (!user.billing?.stripeCustomerId) {
       return res.status(400).json({ message: 'No Stripe customer found' });
     }
 
-    // Create a setup intent for updating payment method
     const setupIntent = await stripe.setupIntents.create({
       customer: user.billing.stripeCustomerId,
       usage: 'off_session'
@@ -665,5 +787,34 @@ exports.updatePaymentMethod = async (req, res) => {
   } catch (error) {
     console.error('Error updating payment method:', error);
     res.status(500).json({ message: error.message });
+  }
+};
+
+exports.handleCompanySubscriptionUpdate = async (companyId) => {
+  try {
+    console.log(`[Webhook] Processing subscription update for company ${companyId}`);
+    
+    const company = await User.findById(companyId).select('billing companyName');
+    if (!company) {
+      console.error(`[Webhook] Company not found: ${companyId}`);
+      return;
+    }
+
+    const updatePayload = {
+      'billing.trialEndDate': company.billing?.trialEndDate,
+      'billing.subscription': company.billing?.subscription,
+      'usage.storage.limit': getStorageLimitForPlan(company.billing?.subscription?.plan),
+      'billing.lastSyncedAt': new Date(),
+      'billing.syncMethod': 'webhook'
+    };
+
+    const result = await User.updateMany(
+      { company: companyId },
+      { $set: updatePayload }
+    );
+
+    console.log(`[Webhook] Updated ${result.modifiedCount} employees for ${company.companyName}`);
+  } catch (error) {
+    console.error(`[Webhook] Failed to update employees for company ${companyId}:`, error);
   }
 };

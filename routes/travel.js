@@ -5,131 +5,84 @@ const travelController = require('../api/controllers/travel');
 
 const { protect } = require('../api/middleware/authMiddleware');
 
-// Travel Request Routes
-router.post( '/', protect(["employee","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Sales/Marketing","Enterprise(CEO, CFO, etc.)"]), travelController.travelRequest);
 
-router.get("/analytics", protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getTravelExpenseAnalytics);
+const billingRoles = [
+  "admin", 
+  "IT/Technical",
+  "Executive (CEO, CFO, etc.)",
+  "Management",
+  "Human Resources",
+  "Enterprise(CEO, CFO, etc.)","Software Engineer",
+    "Senior Software Engineer", 
+    "Lead Engineer",
+    "Product Manager",
+    "Senior Product Manager",
+    "Data Scientist",
+    "Data Analyst",
+    "UI/UX Designer",
+    "Senior Designer",
+    "DevOps Engineer",
+    "Quality Assurance Engineer",
+    "Business Analyst",
+    "Project Manager",
+    "Scrum Master",
+    "Sales Representative",
+    "Sales Manager",
+    "Marketing Specialist",
+    "Marketing Manager",
+    "HR Specialist",
+    "HR Manager",
+    "Finance Analyst",
+    "Accountant",
+    "Administrative Assistant",
+    "Office Manager",
+    "Customer Support Representative",
+    "Customer Success Manager"
+];
+
+
+
+// Travel Request Routes
+router.post( '/', protect(billingRoles), travelController.travelRequest);
+
+router.get("/analytics", protect(billingRoles), travelController.getTravelExpenseAnalytics);
 // Detailed breakdown endpoint
-router.get("/breakdown", protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getTravelExpenseBreakdown);
+router.get("/breakdown", protect(billingRoles), travelController.getTravelExpenseBreakdown);
 
 // Export endpoint for CSV/JSON data
-router.get("/export", protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.exportTravelExpenseData);
+router.get("/export", protect(billingRoles), travelController.exportTravelExpenseData);
 
-router.get('/employee/processed',protect(["employee","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Sales/Marketing","Enterprise(CEO, CFO, etc.)"]), travelController.getEmployeeProcessedRequests);
+router.get('/employee/processed',protect(billingRoles), travelController.getEmployeeProcessedRequests);
 
 // Approval Routes
-router.put( '/:id/supervisor-approval', protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.supervisorApproval);
+router.put( '/:id/supervisor-approval', protect(billingRoles), travelController.supervisorApproval);
 
 
-router.put('/:id/final-approval',protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]),travelController.finalApproval);
+router.put('/:id/final-approval',protect(billingRoles),travelController.finalApproval);
 
 // Fetching Routes     
-router.get( '/pending/recon', protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getPendingReconciliation);
-router.get( '/approved/recon', protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getApprovedReconciliation);
-router.get( '/pending', protect(["employee","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getPendingRequests);
-router.get( '/pending/all', protect(["employee","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getPendingRequestsAll);
-router.get( '/pending/stats', protect(["employee","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getPendingApprovalsStats);
-router.get('/supervisor-approved', protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getSupervisorApprovedRequests);
-router.get('/finance/pending', protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Sales/Marketing","Enterprise(CEO, CFO, etc.)"]), travelController.getFinancePendingRequests);
-router.get('/finance/processed', protect(["admin","employee","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Sales/Marketing","Enterprise(CEO, CFO, etc.)"]), travelController.getFinanceProcessedRequestsUser);
+router.get( '/pending/recon', protect(billingRoles), travelController.getPendingReconciliation);
+router.get( '/approved/recon', protect(billingRoles), travelController.getApprovedReconciliation);
+router.get( '/pending', protect(billingRoles), travelController.getPendingRequests);
+router.get( '/pending/all', protect(billingRoles), travelController.getPendingRequestsAll);
+router.get( '/pending/stats', protect(billingRoles), travelController.getPendingApprovalsStats);
+router.get('/supervisor-approved', protect(billingRoles), travelController.getSupervisorApprovedRequests);
+router.get('/finance/pending', protect(billingRoles), travelController.getFinancePendingRequests);
+router.get('/finance/processed', protect(billingRoles), travelController.getFinanceProcessedRequestsUser);
 router.get('/employee/:employeeId/reconcile-pending', protect, travelController.getReconcilePendingRequests);
 
-router.put( '/:id/expenses', protect(["employee","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.saveExpense);
-router.put('/:id/assign-driver',protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]),travelController.assignDriver);
-router.post('/:id/reconcile', protect(["admin","employee","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]),travelController.submitReconciliation);
+router.put( '/:id/expenses', protect(billingRoles), travelController.saveExpense);
+router.put('/:id/assign-driver',protect(billingRoles),travelController.assignDriver);
+router.post('/:id/reconcile', protect(billingRoles),travelController.submitReconciliation);
 
-router.post('/:id/send-notifications', protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.sendTravelNotifications);
+router.post('/:id/send-notifications', protect(billingRoles), travelController.sendTravelNotifications);
 
 // Finance Routes
-router.put('/:id/finance-process', protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.financeProcess);
+router.put('/:id/finance-process', protect(billingRoles), travelController.financeProcess);
 
 // Travel Execution Routes
 router.put('/:id/complete-travel', protect, travelController.completeTravel);
-router.put( '/:id/process-reconciliation',  protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.processReconciliation);
+router.put( '/:id/process-reconciliation',  protect(billingRoles), travelController.processReconciliation);
 
 // Reconciliation Routes
 router.post(
@@ -144,11 +97,7 @@ router.post(
   travelController.submitReconciliation
 );
 
-router.get('/:id', protect(["admin","procurement_officer","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), travelController.getTravelRequestById);
+router.get('/:id', protect(billingRoles), travelController.getTravelRequestById);
 
 router.post(
   '/:id/reconcile-expenses',
@@ -184,6 +133,9 @@ router.get(
   protect,
   travelController.getReconciliationStatus
 );
+
+
+router.post('/:id/send-notification', protect(billingRoles), travelController.sendTravelNotification);
 
 // Dashboard Routes
 router.get('/dashboard/overview', protect, travelController.getDashboardOverview);

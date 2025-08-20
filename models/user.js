@@ -581,6 +581,14 @@ isEnterpriseAdmin: {
 });
 
 
+// In user.js
+UserSchema.virtual('isEnterpriseUser').get(function() {
+  return this.isEnterpriseAdmin || 
+         this.enterpriseRoles?.length > 0 || 
+         this.role?.includes('Enterprise');
+});
+
+
 
 // Indexes for efficient querying
 UserSchema.index({ registrationToken: 1 });

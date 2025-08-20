@@ -6,6 +6,8 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
+const morgan = require('morgan');
+
 
 // Load environment variables
 dotenv.config();
@@ -47,6 +49,9 @@ app.use((req, res, next) => {
   req.io = io;
   next();
 });
+
+app.use(morgan('dev'));
+
 
 // Connect to MongoDB
 const uri = process.env.MONGO_URI || "mongodb+srv://brianmtonga592:TXrlxC13moNMMIOh@lostandfound1.f6vrf.mongodb.net/?retryWrites=true&w=majority&appName=lostandfound1"

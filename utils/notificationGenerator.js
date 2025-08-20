@@ -64,7 +64,7 @@ const generateFleetNotifications = (io) => {
         io.emit('new-notification', notification);
       }
       
-      console.log(`[Fleet Notification] ${notification.type.toUpperCase()}: ${notification.message}`);
+     
       
     } catch (error) {
       console.error('Error generating fleet notification:', error);

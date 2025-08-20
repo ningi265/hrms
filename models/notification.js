@@ -1,9 +1,18 @@
-const mongoose = require("mongoose");
+// models/notification.js
+const mongoose = require('mongoose');
 
-const NotificationSchema = new mongoose.Schema({
-    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    message: { type: String, required: true },
-    read: { type: Boolean, default: false },
-}, { timestamps: true });
+const notificationSchema = new mongoose.Schema({
+  travelRequest: { type: mongoose.Schema.Types.ObjectId, ref: 'TravelRequest' },
+  sentBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  sentTo: String,
+  subject: String,
+  message: String,
+  amount: Number,
+  currency: String,
+  status: { type: String, enum: ['sent', 'failed'], default: 'sent' },
+  sendGridResponse: Number,
+  error: String,
+  createdAt: { type: Date, default: Date.now }
+});
 
-module.exports = mongoose.model("Notification", NotificationSchema);
+module.exports = mongoose.model('Notification', notificationSchema);

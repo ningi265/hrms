@@ -36,7 +36,8 @@ const billingRoles = [
     "Administrative Assistant",
     "Office Manager",
     "Customer Support Representative",
-    "Customer Success Manager"
+    "Customer Success Manager",
+    "Vendor"
 ];
 
 // Public webhook endpoint (must be before other routes and without auth)

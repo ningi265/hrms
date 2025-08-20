@@ -11,12 +11,14 @@ const {
     confirmPO
 } = require("../api/controllers/purchaseOrderController");
 const { protect } = require("../api/middleware/authMiddleware");
-const { trackPurchaseOrderCreation } = require("../api/middleware/usageMonitoringMiddleware");
-const { updateUsageAfterResponse } = require("../utils/usageUtils");
+const { trackApiUsage, checkStorageLimit, getUsageSummary } = require("../api/middleware/usageMiddleware");
 
 const router = express.Router();
 
-// Create PO (Procurement Officer) - Now with usage tracking
+// Apply API usage tracking to all routes
+router.use(trackApiUsage);
+
+// Create PO (Procurement Officer)
 router.post("/", 
   protect([
     "procurement_officer",
@@ -27,9 +29,7 @@ router.post("/",
     "Accounting/Finance",
     "Enterprise(CEO, CFO, etc.)"
   ]), 
-  trackPurchaseOrderCreation, // Check PO limit before creation
-  createPO,
-  updateUsageAfterResponse // Update usage after successful creation
+  createPO
 );
 
 // Get PO statistics
@@ -154,6 +154,19 @@ router.put("/:id/confirm",
     "Enterprise(CEO, CFO, etc.)"
   ]), 
   confirmDelivery
+);
+
+// Add usage summary endpoint
+router.get("/usage/summary",
+  protect([
+    "procurement_officer",
+    "admin",
+    "IT/Technical",
+    "Executive (CEO, CFO, etc.)",
+    "Management",
+    "Accounting/Finance"
+  ]),
+  getUsageSummary
 );
 
 module.exports = router;

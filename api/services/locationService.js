@@ -13,11 +13,11 @@ class LocationService {
 
   start(intervalMinutes = 2) {
     if (this.isRunning) {
-      console.log('Location service is already running');
+  
       return;
     }
 
-    console.log(`Starting location service with ${intervalMinutes} minute intervals`);
+  
     this.isRunning = true;
 
     const cronPattern = `*/${intervalMinutes} * * * *`;
@@ -33,12 +33,12 @@ class LocationService {
     // Run initial fetch
     this.fetchAllDriverLocations();
 
-    console.log('Location service started successfully');
+
   }
 
   stop() {
     if (!this.isRunning) {
-      console.log('Location service is not running');
+    
       return;
     }
 
@@ -53,7 +53,7 @@ class LocationService {
 
   async fetchAllDriverLocations() {
     try {
-      console.log('Fetching live locations for all active drivers...');
+    
       
       // FIXED: Include pending drivers and don't filter by lastLoginAt for testing
       const activeDrivers = await User.find({
@@ -61,7 +61,7 @@ class LocationService {
         status: { $in: ['active', 'pending'] } // Include pending drivers
       }).select(['firstName', 'lastName', 'employeeId', 'location', 'lastLoginAt']);
 
-      console.log(`Found ${activeDrivers.length} drivers to update`);
+    
 
       const updatePromises = [];
       let successCount = 0;
@@ -84,7 +84,7 @@ class LocationService {
 
       this.lastUpdateTime = new Date();
 
-      console.log(`Location update completed: ${successCount} successful, ${errorCount} failed`);
+     
 
       if (this.io) {
         this.io.emit('location-service-update', {
@@ -103,7 +103,7 @@ class LocationService {
       };
 
     } catch (error) {
-      console.error('Error in bulk location fetch:', error);
+   
       return {
         success: false,
         error: error.message
@@ -113,7 +113,7 @@ class LocationService {
 
   async fetchAndUpdateDriverLocation(driver) {
     try {
-      console.log(`Fetching location for driver: ${driver.firstName} ${driver.lastName} (${driver.employeeId})`);
+      
       
       const liveLocation = await this.simulateGPSFetch(driver);
       
@@ -132,7 +132,7 @@ class LocationService {
           }
         );
 
-        console.log(`✅ Updated location for ${driver.employeeId}: ${liveLocation.latitude}, ${liveLocation.longitude}`);
+  
 
         // Emit real-time update
         if (this.io) {
@@ -158,7 +158,7 @@ class LocationService {
           location: liveLocation
         };
       } else {
-        console.log(`❌ No GPS data available for ${driver.employeeId}`);
+      
         return {
           success: false,
           driverId: driver.employeeId,
@@ -166,7 +166,7 @@ class LocationService {
         };
       }
     } catch (error) {
-      console.error(`❌ Error fetching location for driver ${driver.employeeId}:`, error);
+    
       return {
         success: false,
         driverId: driver.employeeId,
@@ -208,7 +208,7 @@ class LocationService {
 
       // Simulate occasional network failures (reduced to 2% for testing)
       if (Math.random() < 0.02) {
-        console.log(`Network failure simulated for driver ${driver.employeeId}`);
+       
         return null;
       }
 
@@ -217,7 +217,7 @@ class LocationService {
 
       return newLocation;
     } catch (error) {
-      console.error('Error simulating GPS fetch:', error);
+
       return null;
     }
   }
@@ -312,7 +312,7 @@ class LocationService {
 
       return await this.fetchAndUpdateDriverLocation(driver);
     } catch (error) {
-      console.error(`Error updating location for driver ${driverId}:`, error);
+
       throw error;
     }
   }
