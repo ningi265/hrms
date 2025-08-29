@@ -1527,8 +1527,8 @@ exports.getFinanceProcessedRequestsUser = async (req, res) => {
     const approvedRequests = await TravelRequest.find({
       employee: userId,
       finalApproval: "approved",
-      financeStatus: "processed"
-    }).populate("employee", "name email department");
+      financeStatus: "completed"
+    }).populate("employee", "lastName firstName email department role");
     
     res.status(200).json(approvedRequests);
   } catch (error) {
@@ -1672,12 +1672,14 @@ exports.assignDriver = async (req, res) => {
 
 // GET all finally approved requests ready for finance processing
 exports.getFinancePendingRequests = async (req, res) => {
+  console.log("Request User:", req.user); 
   try {
     const approvedRequests = await TravelRequest.find({
       finalApproval: "approved",
-      financeStatus:  { $in: ["pending", "processed"] },
-    }).populate("employee", "firstName lastName email phoneNumber role ")
-    .populate("assignedDriver", "firstName lastName email phoneNumber");
+      financeStatus:  { $in: ["pending", "processed",  "completed"] },
+    }).populate("employee", "firstName lastName email phoneNumber role department ")
+    .populate("assignedDriver", "firstName lastName email phoneNumber")
+    .populate("finalApprover", "firstName lastName email phoneNumber role");
     res.status(200).json(approvedRequests);
   } catch (error) { 
     console.error("Error fetching finance pending requests:", error);
@@ -2343,25 +2345,42 @@ async function getExpenseBreakdown(userId) {
 // @desc    Send notifications to relevant parties about travel arrangements
 // @route   POST /api/travel-requests/:id/send-notifications
 // @access  Private (PO/admin)
+
+
 exports.sendTravelNotifications = async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
-      recipients,
-      subject,
-      message,
-      includeItinerary
-    } = req.body;
+    const { recipients, subject, message, includeItinerary } = req.body;
+
+    console.log('\n🐛 DEBUG: Travel notifications request started');
+    console.log('📨 Request body:', req.body);
 
     // Validate input
     if (!recipients || recipients.length === 0) {
+      console.log('❌ DEBUG: No recipients provided');
       return res.status(400).json({ message: 'At least one recipient is required' });
     }
     if (!subject || !message) {
+      console.log('❌ DEBUG: Subject or message missing');
       return res.status(400).json({ message: 'Subject and message are required' });
     }
 
+    // Check SendGrid config
+    console.log('🔍 DEBUG: Environment variables check:');
+    console.log('- SENDGRID_API_KEY:', process.env.SENDGRID_API_KEY ? 'SET' : 'NOT SET');
+
+    if (!process.env.SENDGRID_API_KEY) {
+      console.log('❌ DEBUG: SendGrid API key missing');
+      return res.status(500).json({
+        message: "Email service not configured properly",
+        debug: {
+          sendGridConfigured: !!process.env.SENDGRID_API_KEY
+        }
+      });
+    }
+
     // Find and update the travel request
+    console.log('🔍 DEBUG: Looking for travel request with ID:', id);
     const travelRequest = await TravelRequest.findByIdAndUpdate(
       id,
       {
@@ -2376,43 +2395,79 @@ exports.sendTravelNotifications = async (req, res) => {
         }
       },
       { new: true }
-    ).populate('employee', 'firstName email phoneNumber')
-     .populate('assignedDriver', 'firstName email phoneNumber');
+    )
+      .populate('employee', 'firstName email phoneNumber')
+      .populate('assignedDriver', 'firstName email phoneNumber');
 
     if (!travelRequest) {
+      console.log('❌ DEBUG: Travel request not found');
       return res.status(404).json({ message: 'Travel request not found' });
     }
 
-    // Validate recipient IDs are valid ObjectIds
-    const validRecipients = recipients.filter(recipientId => 
+    // Validate recipient IDs
+    const validRecipients = recipients.filter(recipientId =>
       mongoose.Types.ObjectId.isValid(recipientId)
     );
 
     if (validRecipients.length === 0) {
+      console.log('❌ DEBUG: No valid recipient IDs');
       return res.status(400).json({ message: 'No valid recipient IDs provided' });
     }
 
-    // Send notifications to all valid recipients
-    const notificationPromises = validRecipients.map(async recipientId => {
+    console.log('✅ DEBUG: Valid recipients:', validRecipients);
+
+    // Send email notifications via SendGrid
+    const emailPromises = validRecipients.map(async recipientId => {
       try {
         const user = await User.findById(recipientId);
-        if (user) {
-          await sendNotifications(
-            recipientId,
-            subject,
-            message
-          );
+        if (user && user.email) {
+          console.log(`📧 DEBUG: Preparing email for ${user.email}`);
+
+          let itineraryDetails = '';
+          if (includeItinerary && travelRequest) {
+            itineraryDetails = `
+              <h3>Travel Itinerary</h3>
+              <p><strong>Employee:</strong> ${travelRequest.employee?.firstName}</p>
+              <p><strong>Departure:</strong> ${travelRequest.departureDate}</p>
+              <p><strong>Return:</strong> ${travelRequest.returnDate}</p>
+              <p><strong>Location:</strong> ${travelRequest.location}</p>
+            `;
+          }
+
+          const msg = {
+            to: user.email,
+            from: {
+              name: 'NexusMWI',
+              email: 'noreply@nexusmwi.com', // must be verified in SendGrid
+            },
+            subject: subject,
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 5px;">
+                <h2 style="color: #333;">${subject}</h2>
+                <p>Hello ${user.firstName || 'there'},</p>
+                <p>${message}</p>
+                ${itineraryDetails}
+                <p>Sent by NexusMWI Fleet System.</p>
+              </div>
+            `,
+            text: `${message}\n\n${includeItinerary ? `Travel Itinerary:\nEmployee: ${travelRequest.employee?.firstName}\nDeparture: ${travelRequest.departureDate}\nReturn: ${travelRequest.returnDate}\nLocation: ${travelRequest.location}` : ''}`,
+          };
+
+          const [response] = await sgMail.send(msg);
+          console.log(`✅ DEBUG: Email sent successfully to ${user.email}`, {
+            statusCode: response.statusCode,
+          });
         }
-      } catch (error) {
-        console.error(`Error sending notification to user ${recipientId}:`, error);
+      } catch (err) {
+        console.error(`❌ DEBUG: Error sending email to user ${recipientId}:`, err.message);
       }
     });
 
-    await Promise.all(notificationPromises);
+    await Promise.all(emailPromises);
 
     res.status(200).json({
       success: true,
-      message: 'Fleet notifications sent successfully',
+      message: 'Fleet notifications sent successfully via SendGrid',
       data: {
         fleetNotification: travelRequest.fleetNotification,
         travelRequestStatus: travelRequest.status
@@ -2420,13 +2475,13 @@ exports.sendTravelNotifications = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error sending fleet notifications:', error);
-    res.status(500).json({ 
+    console.error('❌ DEBUG: General error in sendTravelNotifications:', error);
+    res.status(500).json({
       success: false,
       message: 'Server error while sending fleet notifications',
-      error: error.message 
+      error: error.message,
     });
-  }   
+  }
 };
 
 
@@ -2735,4 +2790,323 @@ function formatCurrency(amount, currency) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(amount);
+}
+
+
+
+// @desc    Book flight for a travel request
+// @route   POST /api/travel-requests/:id/book-flight
+// @access  Private (Admin/Procurement Officer)
+exports.bookFlight = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      airline,
+      flightNumber,
+      ticketClass,
+      departureTime,
+      arrivalTime,
+      price,
+      notes
+    } = req.body;
+
+    console.log("📌 Incoming bookFlight request");
+    console.log("➡️ Params.id:", id);
+    console.log("➡️ Body:", { airline, flightNumber, ticketClass, departureTime, arrivalTime, price, notes });
+    console.log("➡️ User:", req.user ? { id: req.user._id, role: req.user.role, email: req.user.email } : "No user");
+
+    // Validate required fields
+    if (!airline || !flightNumber || !departureTime) {
+      console.warn("⚠️ Missing required fields");
+      return res.status(400).json({
+        message: "Airline, flight number, and departure time are required"
+      });
+    }
+
+    // Validate price is a positive number
+    if (price && (isNaN(price) || price < 0)) {
+      console.warn("⚠️ Invalid price received:", price);
+      return res.status(400).json({
+        message: "Price must be a positive number"
+      });
+    }
+
+    // Find the travel request
+    console.log("🔍 Looking up TravelRequest by id...");
+    const travelRequest = await TravelRequest.findById(id)
+      .populate('employee', 'firstName lastName email phoneNumber')
+      .populate('assignedDriver', 'firstName lastName email phoneNumber');
+
+    if (!travelRequest) {
+      console.error("❌ Travel request not found for id:", id);
+      return res.status(404).json({ message: "Travel request not found" });
+    }
+
+    console.log("✅ Found travelRequest:", {
+      id: travelRequest._id,
+      status: travelRequest.status,
+      finalApproval: travelRequest.finalApproval,
+      existingFlight: travelRequest.flightBooking
+    });
+
+    // Check if travel request is approved
+    if (travelRequest.finalApproval !== "approved") {
+      console.warn("⚠️ Travel request not approved:", travelRequest.finalApproval);
+      return res.status(400).json({
+        message: "Cannot book flight for a request that is not finally approved"
+      });
+    }
+
+    // Check if flight is already booked
+    if (travelRequest.flightBooking && travelRequest.flightBooking.status === "booked") {
+      console.warn("⚠️ Flight already booked:", travelRequest.flightBooking);
+      return res.status(400).json({
+        message: "Flight already booked for this travel request",
+        existingBooking: travelRequest.flightBooking
+      });
+    }
+
+    // Create flight booking object
+    const flightBooking = {
+      airline,
+      flightNumber: flightNumber.toUpperCase(),
+      ticketClass: ticketClass || "economy",
+      departureTime: new Date(departureTime),
+      arrivalTime: arrivalTime ? new Date(arrivalTime) : null,
+      price: price ? Number(price) : 0,
+      currency: travelRequest.currency || "MWK",
+      notes: notes || "",
+      bookedBy: req.user._id,
+      bookedAt: new Date(),
+      status: "booked",
+      confirmationNumber: generateConfirmationNumber()
+    };
+
+    console.log("🛫 Prepared flightBooking object:", flightBooking);
+
+    // Update the travel request with flight booking
+    console.log("✏️ Updating travel request with flight booking...");
+    const updatedRequest = await TravelRequest.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          flightBooking: flightBooking,
+          status: 'flight_booked', // Update overall status
+          'fleetNotification.sent': false // Reset notification status
+        }
+      },
+      { new: true }
+    )
+      .populate('employee', 'firstName lastName email phoneNumber')
+      .populate('assignedDriver', 'firstName lastName email phoneNumber')
+      .populate('flightBooking.bookedBy', 'firstName lastName');
+
+    console.log("✅ Updated travelRequest with flightBooking:", {
+      id: updatedRequest._id,
+      newStatus: updatedRequest.status,
+      flightBooking: updatedRequest.flightBooking
+    });
+
+    // Log the booking activity
+    console.log(`🚀 Flight booked successfully for travel request ${id} by user ${req.user._id}`);
+
+    res.status(200).json({
+      message: "Flight booked successfully",
+      travelRequest: updatedRequest,
+      flightBooking: flightBooking
+    });
+
+  } catch (error) {
+    console.error("💥 Error booking flight:", error);
+    res.status(500).json({
+      message: "Server error while booking flight",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+
+// @desc    Get flight booking details for a travel request
+// @route   GET /api/travel-requests/:id/flight-booking
+// @access  Private
+exports.getFlightBooking = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const travelRequest = await TravelRequest.findById(id)
+      .populate('employee', 'firstName lastName email')
+      .populate('flightBooking.bookedBy', 'firstName lastName')
+      .select('flightBooking employee destination location departureDate returnDate');
+
+    if (!travelRequest) {
+      return res.status(404).json({ message: "Travel request not found" });
+    }
+
+    if (!travelRequest.flightBooking) {
+      return res.status(404).json({ message: "No flight booking found for this travel request" });
+    }
+
+    res.status(200).json({
+      flightBooking: travelRequest.flightBooking,
+      travelDetails: {
+        employee: travelRequest.employee,
+        destination: travelRequest.destination || travelRequest.location,
+        travelDates: {
+          departure: travelRequest.departureDate,
+          return: travelRequest.returnDate
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error("Error fetching flight booking:", error);
+    res.status(500).json({
+      message: "Server error while fetching flight booking",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// @desc    Update flight booking details
+// @route   PUT /api/travel-requests/:id/flight-booking
+// @access  Private (Admin/Procurement Officer)
+exports.updateFlightBooking = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+
+    // Remove fields that shouldn't be updated directly
+    delete updates._id;
+    delete updates.bookedBy;
+    delete updates.bookedAt;
+    delete updates.confirmationNumber;
+    delete updates.status;
+
+    // Validate price if provided
+    if (updates.price && (isNaN(updates.price) || updates.price < 0)) {
+      return res.status(400).json({
+        message: "Price must be a positive number"
+      });
+    }
+
+    // Validate date fields if provided
+    if (updates.departureTime && isNaN(new Date(updates.departureTime).getTime())) {
+      return res.status(400).json({
+        message: "Invalid departure time format"
+      });
+    }
+
+    if (updates.arrivalTime && isNaN(new Date(updates.arrivalTime).getTime())) {
+      return res.status(400).json({
+        message: "Invalid arrival time format"
+      });
+    }
+
+    const travelRequest = await TravelRequest.findById(id);
+    if (!travelRequest) {
+      return res.status(404).json({ message: "Travel request not found" });
+    }
+
+    if (!travelRequest.flightBooking) {
+      return res.status(404).json({ message: "No flight booking found to update" });
+    }
+
+    // Update flight booking fields
+    const updatedFlightBooking = {
+      ...travelRequest.flightBooking.toObject(),
+      ...updates,
+      updatedAt: new Date(),
+      updatedBy: req.user._id
+    };
+
+    const updatedRequest = await TravelRequest.findByIdAndUpdate(
+      id,
+      { $set: { flightBooking: updatedFlightBooking } },
+      { new: true }
+    )
+      .populate('employee', 'firstName lastName email')
+      .populate('flightBooking.bookedBy', 'firstName lastName')
+      .populate('flightBooking.updatedBy', 'firstName lastName');
+
+    res.status(200).json({
+      message: "Flight booking updated successfully",
+      flightBooking: updatedRequest.flightBooking
+    });
+
+  } catch (error) {
+    console.error("Error updating flight booking:", error);
+    res.status(500).json({
+      message: "Server error while updating flight booking",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// @desc    Cancel flight booking
+// @route   DELETE /api/travel-requests/:id/flight-booking
+// @access  Private (Admin/Procurement Officer)
+exports.cancelFlightBooking = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { cancellationReason } = req.body;
+
+    if (!cancellationReason) {
+      return res.status(400).json({
+        message: "Cancellation reason is required"
+      });
+    }
+
+    const travelRequest = await TravelRequest.findById(id);
+    if (!travelRequest) {
+      return res.status(404).json({ message: "Travel request not found" });
+    }
+
+    if (!travelRequest.flightBooking) {
+      return res.status(404).json({ message: "No flight booking found to cancel" });
+    }
+
+    // Update flight booking status to cancelled
+    const cancelledFlightBooking = {
+      ...travelRequest.flightBooking.toObject(),
+      status: "cancelled",
+      cancellationReason: cancellationReason,
+      cancelledAt: new Date(),
+      cancelledBy: req.user._id
+    };
+
+    const updatedRequest = await TravelRequest.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          flightBooking: cancelledFlightBooking,
+          status: 'approved' // Revert to approved status since flight was cancelled
+        }
+      },
+      { new: true }
+    )
+      .populate('employee', 'firstName lastName email')
+      .populate('flightBooking.cancelledBy', 'firstName lastName');
+
+    res.status(200).json({
+      message: "Flight booking cancelled successfully",
+      travelRequest: updatedRequest
+    });
+
+  } catch (error) {
+    console.error("Error cancelling flight booking:", error);
+    res.status(500).json({
+      message: "Server error while cancelling flight booking",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Helper function to generate confirmation number
+function generateConfirmationNumber() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+  for (let i = 0; i < 8; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
 }

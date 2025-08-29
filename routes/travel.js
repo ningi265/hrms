@@ -137,12 +137,22 @@ router.get(
 
 router.post('/:id/send-notification', protect(billingRoles), travelController.sendTravelNotification);
 
+
+// Flight Booking Routes
+router.post('/:id/book-flight', protect(billingRoles), travelController.bookFlight);
+router.get('/:id/flight-booking', protect(billingRoles), travelController.getFlightBooking);
+router.put('/:id/flight-booking', protect(billingRoles), travelController.updateFlightBooking);
+router.delete('/:id/flight-booking', protect(billingRoles), travelController.cancelFlightBooking);
+
+
 // Dashboard Routes
 router.get('/dashboard/overview', protect, travelController.getDashboardOverview);
 router.get('/dashboard/stats', protect, travelController.getDashboardStats);
 router.get('/dashboard/quick-links', protect, travelController.getDashboardQuickLinks);
 router.get('/upcoming', protect, travelController.getUpcomingTrips);
 router.get('/recent', protect, travelController.getRecentRequests);
+
+
 
 
 

@@ -15,6 +15,50 @@ const TravelRequestSchema = new mongoose.Schema({
     name: String,  
     url: String   
   }],
+  flightBooking: {
+  airline: String,
+  flightNumber: String,
+  ticketClass: {
+    type: String,
+    enum: ['economy', 'premium_economy', 'business', 'first'],
+   
+  },
+  departureTime: Date,
+  arrivalTime: Date,
+  price: {
+    type: Number,
+    
+  },
+  currency: {
+    type: String,
+   
+  },
+  notes: String,
+  confirmationNumber: String,
+  status: {
+    type: String,
+    enum: ['booked', 'cancelled', 'changed'],
+  
+  },
+  bookedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  bookedAt: {
+    type: Date,
+  },
+  updatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  updatedAt: Date,
+  cancelledBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  cancelledAt: Date,
+  cancellationReason: String
+},
   
   meansOfTravel: { 
     type: String, 
@@ -23,7 +67,7 @@ const TravelRequestSchema = new mongoose.Schema({
   },
   status: { 
     type: String, 
-    enum: ['pending', 'supervisor_approved', 'final_approved', 'rejected','pending_reconciliation', 'completed'],
+    enum: ['pending', 'supervisor_approved', 'final_approved', 'rejected','pending_reconciliation', 'completed', 'flight_booked'],
     default: 'pending'
   },
   supervisor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -44,7 +88,7 @@ const TravelRequestSchema = new mongoose.Schema({
   finalApprovalDate: Date,
   financeStatus: {
     type: String,
-    enum: ['pending', 'processed', 'paid'],
+    enum: ['pending', 'processed', 'paid', 'completed'],
     default: 'pending'
   },
   travelType: {
@@ -59,11 +103,11 @@ const TravelRequestSchema = new mongoose.Schema({
   fleetNotification: {
     sent: { type: Boolean, default: false },
     sentAt: Date,
-    recipients: [{
-      type: String,
-      enum: ['IT/Technical', 'Executive (CEO, CFO, etc.)', 'Management', 'Sales/Marketing', 
-      'Operations', 'Human Resources', 'Accounting/Finance', 'Other', 'user','employee']
-    }],
+  recipients: [{
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'User'
+}],
+
     subject: String,
     message: String,
     includeItinerary: Boolean,

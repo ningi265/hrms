@@ -80,7 +80,7 @@ const VendorSchema = new mongoose.Schema({
         trim: true
     },
 
-    // ADD MISSING FIELDS THAT THE CONTROLLER EXPECTS
+    // Registration timeline fields
     tinIssuedDate: {
         type: Date,
         default: Date.now
@@ -88,6 +88,14 @@ const VendorSchema = new mongoose.Schema({
     registrationIssuedDate: {
         type: Date,
         default: Date.now
+    },
+    // ADDED: Registration submission and approval dates
+    submissionDate: {
+        type: Date,
+        default: Date.now
+    },
+    approvalDate: {
+        type: Date
     },
     formOfBusiness: {
         type: String,
@@ -116,7 +124,7 @@ const VendorSchema = new mongoose.Schema({
         ref: "Company",
         required: [true, "Company reference is required"]
     },
-    // ADD VENDOR REFERENCE (seems like this should reference the User with role "Vendor")
+    // Vendor reference (references the User with role "Vendor")
     vendor: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User"
@@ -126,7 +134,7 @@ const VendorSchema = new mongoose.Schema({
     registrationStatus: {
         type: String,
         enum: ["pending", "approved", "rejected", "suspended"],
-        default: "approved"
+        default: "pending" // Changed from "approved" to "pending" to align with registration workflow
     },
     rating: {
         type: Number,
@@ -181,10 +189,18 @@ VendorSchema.index({ email: 1 }); // For fast email lookups
 VendorSchema.index({ categories: 1 }); // For category-based searches
 VendorSchema.index({ registrationStatus: 1 }); // For status-based queries
 VendorSchema.index({ rating: -1 }); // For sorting by rating
+VendorSchema.index({ submissionDate: -1 }); // For sorting by submission date
+VendorSchema.index({ approvalDate: -1 }); // For sorting by approval date
 
 // Middleware to update timestamps
 VendorSchema.pre('save', function(next) {
     this.updatedAt = Date.now();
+    
+    // Set approvalDate when status changes to 'approved'
+    if (this.isModified('registrationStatus') && this.registrationStatus === 'approved' && !this.approvalDate) {
+        this.approvalDate = Date.now();
+    }
+    
     next();
 });
 

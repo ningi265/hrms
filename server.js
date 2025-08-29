@@ -51,7 +51,7 @@ app.use((req, res, next) => {
 });
 
 app.use(morgan('dev'));
-
+const { startRFQReminderJob } = require("./api/services/rfq-cron");
 
 // Connect to MongoDB
 const uri = process.env.MONGO_URI || "mongodb+srv://brianmtonga592:TXrlxC13moNMMIOh@lostandfound1.f6vrf.mongodb.net/?retryWrites=true&w=majority&appName=lostandfound1"
@@ -68,6 +68,8 @@ mongoose.connect(uri)
     
     // Start auto-generating notifications after DB connection
     startAutoNotifications();
+    // Start RFQ reminder cron job
+    startRFQReminderJob();
   })
   .catch((error) => console.error("Error connecting to MongoDB:", error.message));
 
@@ -90,6 +92,8 @@ const billingRoutes = require("./routes/billingRoutes");
 // Initialize usage monitoring
 const { scheduleMonthlyReset } = require('./utils/usageUtils');
 const { scheduleUsageAlerts } = require('./api/services/usageAlertsService');
+
+
 
 scheduleUsageAlerts();
 scheduleMonthlyReset();

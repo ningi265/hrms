@@ -507,17 +507,19 @@ isEnterpriseAdmin: {
 
 
   },
-  usage: {
-     apiCalls: {
-      count: { type: Number, default: 0 },
-      lastReset: Date
-    },
-    storage: {
-      used: { type: Number, default: 0 }, // in MB
-      limit: { type: Number, default: 100 } // Default 100MB for trial
-    }
-    
+ usage: {
+  apiCalls: {
+    count: { type: Number, default: 0 },   
+    byEndpoint: { type: Map, of: Number, default: {} },
+    byMethod: { type: Map, of: Number, default: {} },
+    lastUpdated: { type: Date, default: Date.now }
   },
+  storage: {
+    used: { type: Number, default: 0 }, 
+    limit: { type: Number, default: 100 }
+  }
+},
+
 
 
 

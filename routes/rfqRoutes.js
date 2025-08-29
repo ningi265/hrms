@@ -9,6 +9,7 @@ const {
 } = require("../api/controllers/rfqController");
 const { protect } = require("../api/middleware/authMiddleware");
 const { getPOById } = require("../api/controllers/purchaseOrderController");
+const { trackApiUsage, checkStorageLimit, getUsageSummary } = require("../api/middleware/usageMiddleware");
 
 const router = express.Router();
 
@@ -17,7 +18,7 @@ router.post("/", protect(["procurement_officer", "admin","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), createRFQ);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), trackApiUsage, createRFQ);
 
 // Get all RFQs (Procurement Officers & Admins)
 router.get("/", protect(["procurement_officer", "admin", "Vendor","IT/Technical",
@@ -27,7 +28,7 @@ router.get("/", protect(["procurement_officer", "admin", "Vendor","IT/Technical"
         "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getAllRFQs);
 
 // Vendor submits a quote
-router.post("/:id/quote", protect(["Vendor", "admin"]), submitQuote);
+router.post("/:id/quote", protect(["Vendor", "admin"]), trackApiUsage,submitQuote);
 
 // Select the best vendor (Procurement Officers & Admins)
 router.put("/:id/select", protect(["procurement_officer", "admin","IT/Technical",

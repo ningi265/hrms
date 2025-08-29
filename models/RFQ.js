@@ -30,17 +30,19 @@ const RFQSchema = new mongoose.Schema({
     default: "open" 
   },
 
-  // Enhanced fields (new)
-  deadline: { 
-    type: Date,
-    validate: {
-      validator: function(value) {
-        // Only validate if deadline is provided
-        return !value || value > new Date();
-      },
-      message: 'Deadline must be in the future'
-    }
-  },
+ deadline: { 
+  type: Date,
+  validate: {
+    validator: function(value) {
+      // Allow past deadlines if RFQ is already closed
+      if (this.status === 'closed') return true;
+      
+      // For open RFQs, deadline must be in the future
+      return !value || value > new Date();
+    },
+    message: 'Deadline must be in the future for open RFQs'
+  }
+},
   description: { 
     type: String,
     trim: true,
@@ -152,8 +154,7 @@ const RFQSchema = new mongoose.Schema({
   remindersSent: {
     type: Number,
     default: 0
-  }
-
+  },
 }, { 
   timestamps: true, // Adds createdAt and updatedAt
   toJSON: { virtuals: true },

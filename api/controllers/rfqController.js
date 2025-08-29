@@ -414,11 +414,11 @@ exports.getAllRFQs = async (req, res) => {
     const rfqs = await RFQ.find(baseQuery)
       .populate({
         path: 'vendors',
-        select: 'name email company'
+        select: 'fistName email company'
       })
       .populate({
         path: 'procurementOfficer',
-        select: 'name email'
+        select: 'firstName lastName email company'
       })
       .populate({
         path: 'company',
@@ -431,6 +431,10 @@ exports.getAllRFQs = async (req, res) => {
       .populate({
         path: 'requisitionId',
         select: 'itemName quantity status'
+      })
+      .populate({
+        path: 'selectedVendor',
+        select: 'firstName, lastName email company'
       })
       .sort(sort)
       .skip(skip)

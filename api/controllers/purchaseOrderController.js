@@ -3,46 +3,101 @@ const RFQ = require("../../models/RFQ");
 const User = require('../../models/user');
 const { notifyVendorPOCreated, notifyPOApproval, notifyPOShipped, notifyPODelivered, notifyPOConfirmed } = require("../services/notificationService");
 
+
+const sgMail = require("@sendgrid/mail");
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
 exports.createPO = async (req, res) => {
-    try {
-      console.log("Create PO Request Body:", req.body); // Log the request payload
-      const { rfqId, items } = req.body;
-  
-      const rfq = await RFQ.findById(rfqId).populate("selectedVendor");
-      console.log("RFQ Found:", rfq); // Log the RFQ
-  
-      if (!rfq) return res.status(404).json({ message: "RFQ not found" });
-      if (rfq.status !== "closed") return res.status(400).json({ message: "RFQ must be closed to generate a PO" });
-  
-      // Calculate total amount
-      const totalAmount = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-      console.log("Calculated Total Amount:", totalAmount); // Log the total amount
-  
-      // Create the purchase order
-      const po = await PurchaseOrder.create({
-        rfq: rfq._id,
-        vendor: rfq.selectedVendor._id,
-        procurementOfficer: req.user._id,
-        items,
-        totalAmount,
+  try {
+    console.log("Create PO Request Body:", req.body);
+    const { rfqId, items } = req.body;
+
+    const rfq = await RFQ.findById(rfqId).populate("selectedVendor");
+    console.log("RFQ Found:", rfq);
+
+    if (!rfq) return res.status(404).json({ message: "RFQ not found" });
+    if (rfq.status !== "closed")
+      return res.status(400).json({ message: "RFQ must be closed to generate a PO" });
+
+    // Calculate total amount
+    const totalAmount = items.reduce(
+      (sum, item) => sum + item.price * item.quantity,
+      0
+    );
+    console.log("Calculated Total Amount:", totalAmount);
+
+    // Create PO
+    const po = await PurchaseOrder.create({
+      rfq: rfq._id,
+      vendor: rfq.selectedVendor._id,
+      procurementOfficer: req.user._id,
+      items,
+      totalAmount,
+    });
+    console.log("Purchase Order Created:", po);
+
+    // Prepare email for vendor
+    if (!process.env.SENDGRID_API_KEY) {
+      console.error("❌ SendGrid API key missing");
+      return res.status(500).json({
+        message: "Email service not configured properly",
       });
-      console.log("Purchase Order Created:", po); // Log the created PO
-  
-      // Notify the vendor
-      await notifyVendorPOCreated(rfq.selectedVendor, po);
-  
-      const populatedPO = await PurchaseOrder.findById(po._id).populate({
-  path: 'vendor',
-  select: 'firstName lastName email'
-});
-
-res.status(201).json({ message: "Purchase Order created successfully", po: populatedPO });
-
-    } catch (err) {
-      console.error("Error in createPO:", err); // Log the error
-      res.status(500).json({ message: "Server error", error: err.message });
     }
-  };
+
+    const msg = {
+      to: rfq.selectedVendor.email,
+      from: {
+        name: "NexusMWI Procurement",
+        email: "noreply@nexusmwi.com", 
+      },
+      subject: `Purchase Order Created - PO#${po._id}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee; border-radius: 5px;">
+          <h2 style="color: #333;">New Purchase Order Created</h2>
+          <p>Hello ${rfq.selectedVendor.firstName || ""} ${rfq.selectedVendor.lastName || ""},</p>
+          <p>A new Purchase Order has been created for your company:</p>
+          <ul>
+            <li><strong>PO ID:</strong> ${po._id}</li>
+            <li><strong>RFQ Item:</strong> ${rfq.itemName}</li>
+            <li><strong>Quantity:</strong> ${rfq.quantity}</li>
+            <li><strong>Total Amount:</strong> $${totalAmount}</li>
+          </ul>
+          <p>Please log in to the NexusMWI system to view the full details.</p>
+        </div>
+      `,
+      text: `A new Purchase Order has been created.\nPO ID: ${po._id}\nRFQ Item: ${rfq.itemName}\nQuantity: ${rfq.quantity}\nTotal Amount: $${totalAmount}`,
+    };
+
+    try {
+      const [responseSendGrid] = await sgMail.send(msg);
+      console.log("✅ Email sent successfully:", responseSendGrid.statusCode);
+
+      const populatedPO = await PurchaseOrder.findById(po._id).populate({
+        path: "vendor",
+        select: "firstName lastName email",
+      });
+
+      res.status(201).json({
+        message: "Purchase Order created successfully",
+        po: populatedPO,
+        email: {
+          status: responseSendGrid.statusCode,
+          to: rfq.selectedVendor.email,
+        },
+      });
+    } catch (sendGridError) {
+      console.error("❌ SendGrid failed:", sendGridError.message);
+      res.status(201).json({
+        message: "PO created, but email failed to send",
+        po,
+        error: sendGridError.message,
+      });
+    }
+  } catch (err) {
+    console.error("Error in createPO:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
 
 // Approve a PO (Admin Only)
 exports.approvePO = async (req, res) => {
@@ -91,22 +146,193 @@ exports.rejectPO = async (req, res) => {
 
 // Get All POs (Admin & Procurement Officers)
 exports.getAllPOs = async (req, res) => {
-    try {
-        console.log("Fetching All Purchase Orders"); // Log the action
-        const pos = await PurchaseOrder.find().populate("vendor procurementOfficer approver", "firstName lastName email");
-        console.log("All Purchase Orders:", pos); // Log the fetched POs
-
-        res.json(pos);
-    } catch (err) {
-        console.error("Error in getAllPOs:", err); // Log the error
-        res.status(500).json({ message: "Server error", error: err.message });
+  try {
+    // 1. Get the requesting user
+    console.log("Requesting user ID:", req.user._id);
+    const requestingUser = await User.findById(req.user._id).select("company isEnterpriseAdmin");
+    if (!requestingUser) {
+      return res.status(404).json({ message: "User not found" });
     }
+
+    // 2. Build base query (scope to company unless enterprise admin with allCompanies flag)
+    const companyQuery =
+      requestingUser.isEnterpriseAdmin && req.query.allCompanies
+        ? {}
+        : { company: requestingUser.company };
+    const baseQuery = { ...companyQuery };
+
+    // 3. Optional filters
+    if (req.query.status) {
+      baseQuery.status = req.query.status;
+    }
+    if (req.query.deliveryStatus) {
+      baseQuery.deliveryStatus = req.query.deliveryStatus;
+    }
+
+    // 4. Pagination
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    // 5. Sorting
+    const sortField = req.query.sortBy || "createdAt";
+    const sortOrder = req.query.sortOrder === "desc" ? -1 : 1;
+    const sort = { [sortField]: sortOrder };
+
+    // 6. Fetch POs with population
+    const pos = await PurchaseOrder.find(baseQuery)
+      .populate({
+        path: "vendor",
+        select: "firstName lastName email company"
+      })
+      .populate({
+        path: "procurementOfficer",
+        select: "firstName lastName email company"
+      })
+      .populate({
+        path: "approver",
+        select: "firstName lastName email company"
+      })
+      .populate({
+        path: "rfq",
+        select: "status deadline"
+      })
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    // 7. Total count for pagination
+    const totalCount = await PurchaseOrder.countDocuments(baseQuery);
+
+    console.log(`Fetched ${pos.length} POs for company ${requestingUser.company}`);
+
+    // 8. Enhance response (custom derived fields)
+    const enhancedPOs = pos.map(po => ({
+      ...po,
+      itemCount: po.items?.length || 0,
+      isVendorConfirmed: po.vendorConfirmation?.confirmed || false,
+      vendorConfirmedAt: po.vendorConfirmation?.confirmedAt || null,
+      statusColor: getStatusColor(po.status),
+      deliveryColor: getDeliveryColor(po.deliveryStatus)
+    }));
+
+    // 9. Response
+    res.status(200).json({
+      success: true,
+      data: enhancedPOs,
+      meta: {
+        total: totalCount,
+        page,
+        limit,
+        totalPages: Math.ceil(totalCount / limit),
+        sort: `${sortField}:${sortOrder === 1 ? "asc" : "desc"}`,
+        context: {
+          company: requestingUser.company,
+          isEnterpriseAdmin: requestingUser.isEnterpriseAdmin,
+          allCompanies: req.query.allCompanies ? true : false
+        }
+      }
+    });
+  } catch (error) {
+    console.error("Error fetching POs:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching POs",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
+    });
+  }
 };
+
+exports.getVendorPOs = async (req, res) => {
+  try {
+    // 1. Identify vendor (from authenticated user or query param)
+    const vendorId = req.user?._id || req.params.vendorId;
+    if (!vendorId) {
+      return res.status(400).json({ message: "Vendor ID is required" });
+    }
+
+    console.log("Fetching POs for vendor:", vendorId);
+
+    // 2. Base query: only POs where this vendor is the selected vendor
+    const baseQuery = { vendor: vendorId };
+
+    // 3. Optional filters
+    if (req.query.status) {
+      baseQuery.status = req.query.status;
+    }
+    if (req.query.deliveryStatus) {
+      baseQuery.deliveryStatus = req.query.deliveryStatus;
+    }
+
+    // 4. Pagination
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    // 5. Sorting
+    const sortField = req.query.sortBy || "createdAt";
+    const sortOrder = req.query.sortOrder === "desc" ? -1 : 1;
+    const sort = { [sortField]: sortOrder };
+
+    // 6. Fetch vendor POs with populated RFQ
+    const pos = await PurchaseOrder.find(baseQuery)
+      .populate({
+        path: "rfq",
+        select: "itemName quantity status deadline selectedVendor",
+      })
+      .populate({
+        path: "procurementOfficer",
+        select: "firstName lastName email company",
+      })
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    // 7. Total count
+    const totalCount = await PurchaseOrder.countDocuments(baseQuery);
+
+    console.log(`Fetched ${pos.length} POs for vendor ${vendorId}`);
+
+    // 8. Enhance response
+    const enhancedPOs = pos.map((po) => ({
+      ...po,
+      itemCount: po.items?.length || 0,
+      statusColor: getStatusColor(po.status),
+      deliveryColor: getDeliveryColor(po.deliveryStatus),
+    }));
+
+    // 9. Response
+    res.status(200).json({
+      success: true,
+      data: enhancedPOs,
+      meta: {
+        total: totalCount,
+        page,
+        limit,
+        totalPages: Math.ceil(totalCount / limit),
+        sort: `${sortField}:${sortOrder === 1 ? "asc" : "desc"}`,
+        context: {
+          vendor: vendorId,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching vendor POs:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching vendor POs",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
 
 // Get a Single PO
 exports.getPOById = async (req, res) => {
     try {
-      const { id } = req.params; // Extract the PO ID from the request parameters
+      const { id } = req.params; 
   
       // Validate the ID
       if (!id || !mongoose.Types.ObjectId.isValid(id)) {
@@ -459,3 +685,28 @@ exports.updateDeliveryStatus = async (req, res) => {
       res.status(500).json({ message: "Server error", error: err.message });
     }
   };
+
+
+  const getStatusColor = (status) => {
+  const statusColors = {
+    'pending': '#ffc107',
+    'approved': '#28a745',
+    'rejected': '#dc3545',
+    'draft': '#6c757d',
+    'in-progress': '#17a2b8',
+    'completed': '#28a745',
+    'cancelled': '#dc3545'
+  };
+  return statusColors[status?.toLowerCase()] || '#6c757d';
+};
+
+const getDeliveryColor = (deliveryStatus) => {
+  const deliveryColors = {
+    'pending': '#ffc107',
+    'shipped': '#17a2b8',
+    'delivered': '#28a745',
+    'delayed': '#fd7e14',
+    'cancelled': '#dc3545'
+  };
+  return deliveryColors[deliveryStatus?.toLowerCase()] || '#6c757d';
+};

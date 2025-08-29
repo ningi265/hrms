@@ -8,15 +8,13 @@ const {
     updateDeliveryStatus,
     confirmDelivery,
     getPOStats,
-    confirmPO
+    confirmPO,
+    getVendorPOs
 } = require("../api/controllers/purchaseOrderController");
 const { protect } = require("../api/middleware/authMiddleware");
 const { trackApiUsage, checkStorageLimit, getUsageSummary } = require("../api/middleware/usageMiddleware");
 
 const router = express.Router();
-
-// Apply API usage tracking to all routes
-router.use(trackApiUsage);
 
 // Create PO (Procurement Officer)
 router.post("/", 
@@ -29,8 +27,41 @@ router.post("/",
     "Accounting/Finance",
     "Enterprise(CEO, CFO, etc.)"
   ]), 
+   trackApiUsage,
   createPO
 );
+
+// Get All POs
+router.get("/", 
+  protect([
+    "procurement_officer", 
+    "admin", 
+    "Vendor",
+    "IT/Technical",
+    "Executive (CEO, CFO, etc.)",
+    "Management",
+    "Human Resources",
+    "Accounting/Finance",
+    "Enterprise(CEO, CFO, etc.)"
+  ]), 
+  getAllPOs
+);
+
+router.get("/vendor", 
+  protect([
+    "procurement_officer", 
+    "admin", 
+    "Vendor",
+    "IT/Technical",
+    "Executive (CEO, CFO, etc.)",
+    "Management",
+    "Human Resources",
+    "Accounting/Finance",
+    "Enterprise(CEO, CFO, etc.)"
+  ]), 
+  getVendorPOs
+);
+
 
 // Get PO statistics
 router.get("/stats", 
@@ -99,21 +130,7 @@ router.put("/:id/reject",
   rejectPO
 );
 
-// Get All POs
-router.get("/", 
-  protect([
-    "procurement_officer", 
-    "admin", 
-    "Vendor",
-    "IT/Technical",
-    "Executive (CEO, CFO, etc.)",
-    "Management",
-    "Human Resources",
-    "Accounting/Finance",
-    "Enterprise(CEO, CFO, etc.)"
-  ]), 
-  getAllPOs
-);
+
 
 // Get Single PO
 router.get("/:id", 
