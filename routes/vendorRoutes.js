@@ -1,5 +1,5 @@
 const express = require("express");
-const { addVendor, getVendors, updateVendor, deleteVendor, getVendorByUser } = require("../api/controllers/vendorController");
+const { addVendor, getVendors, updateVendor, deleteVendor, getVendorByUser , uploadDocs} = require("../api/controllers/vendorController");
 const { protect } = require("../api/middleware/authMiddleware");
 const vendorController = require('../api/controllers/vendorController');
 const router = express.Router();
@@ -38,7 +38,7 @@ router.post('/register', protect(["admin", "Vendor","IT/Technical",
         "Management",
         "Human Resources",
         "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), 
-    vendorController.uploadPowerOfAttorney, 
+    vendorController.uploadDocs, 
     vendorController.registerVendor
 );
 // GET /api/vendors/registration-status - Check registration status by email
@@ -121,6 +121,12 @@ router.get('/admin/pending',
         "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]),
     vendorController.getPendingRegistrations
 );
+
+router.post('/send-pre-qual-email',protect(["admin", 
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources","Vendor",
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]),  vendorController.sendPreQualEmail);
 
 
 

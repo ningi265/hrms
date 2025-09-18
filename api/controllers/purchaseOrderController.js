@@ -26,6 +26,12 @@ exports.createPO = async (req, res) => {
     );
     console.log("Calculated Total Amount:", totalAmount);
 
+    // Get procurement officer (requesting user)
+    const procurementOfficer = await User.findById(req.user._id).select("company");
+    if (!procurementOfficer) {
+      return res.status(404).json({ message: "Procurement officer not found" });
+    }
+
     // Create PO
     const po = await PurchaseOrder.create({
       rfq: rfq._id,
@@ -33,6 +39,10 @@ exports.createPO = async (req, res) => {
       procurementOfficer: req.user._id,
       items,
       totalAmount,
+      company: procurementOfficer.company, 
+      status: "pending",                   
+      deliveryStatus: "pending",     
+      vendorConfirmation: { confirmed: false } 
     });
     console.log("Purchase Order Created:", po);
 
@@ -48,7 +58,7 @@ exports.createPO = async (req, res) => {
       to: rfq.selectedVendor.email,
       from: {
         name: "NexusMWI Procurement",
-        email: "noreply@nexusmwi.com", 
+        email: "noreply@nexusmwi.com",
       },
       subject: `Purchase Order Created - PO#${po._id}`,
       html: `
@@ -72,10 +82,9 @@ exports.createPO = async (req, res) => {
       const [responseSendGrid] = await sgMail.send(msg);
       console.log("✅ Email sent successfully:", responseSendGrid.statusCode);
 
-      const populatedPO = await PurchaseOrder.findById(po._id).populate({
-        path: "vendor",
-        select: "firstName lastName email",
-      });
+      const populatedPO = await PurchaseOrder.findById(po._id)
+        .populate({ path: "vendor", select: "firstName lastName email company" })
+        .populate({ path: "procurementOfficer", select: "firstName lastName email company" });
 
       res.status(201).json({
         message: "Purchase Order created successfully",
@@ -514,7 +523,7 @@ exports.confirmPO = async (req, res) => {
       // Update the PO with vendor confirmation
       po.vendorConfirmation.confirmed = true;
       po.vendorConfirmation.confirmedAt = new Date();
-      po.status = "approved"; // Update PO status to "confirmed"
+      po.deliveryStatus = "confirmed"; 
 
       await po.save();
 
@@ -527,119 +536,53 @@ exports.confirmPO = async (req, res) => {
   }
 };
 
-// Vendor updates order status (e.g., "Processing", "Shipped")
+
+
 exports.updateDeliveryStatus = async (req, res) => {
-    try {
-        console.log("🔹 Update Delivery Status endpoint hit!");
+  try {
+      const {vendorId, trackingNumber, carrier, } = req.body;
+      const { id: poId } = req.params;
 
-        // Log request parameters and body
-        console.log("➡️ Request Params:", req.params);
-        console.log("➡️ Request Body:", req.body);
+      console.log(req.body);
 
-        const { deliveryStatus, trackingNumber, carrier, token } = req.body;
-        const { id: poId } = req.params;
+      // Validate request data
+      if (!poId || !vendorId) {
+          console.log("❌ Missing required data: poId or vendorId");
+          return res.status(400).json({ message: "Missing required data: poId or vendorId" });
+      }
 
-        console.log("🔹 Extracted Data:");
-        console.log("   - PO ID:", poId);
-        console.log("   - Delivery Status:", deliveryStatus);
-        console.log("   - Tracking Number:", trackingNumber);
-        console.log("   - Carrier:", carrier);
-        console.log("   - Token:", token);
+      // Find the Purchase Order
+      const po = await PurchaseOrder.findById(poId);
+      if (!po) {
+          console.log(`❌ Purchase Order not found with ID: ${poId}`);
+          return res.status(404).json({ message: "Purchase Order not found" });
+      }
 
-        // Validate the delivery status
-        if (!["shipped", "delivered"].includes(deliveryStatus)) {
-            console.log("❌ Invalid delivery status:", deliveryStatus);
-            return res.status(400).json({ message: "Invalid delivery status" });
-        }
+      console.log("✅ Found PO:", po);
 
-        console.log("🔹 Valid delivery status:", deliveryStatus);
+      // Check if the vendor is authorized to confirm this PO
+      if (po.vendor.toString() !== vendorId) {
+          console.log(`⛔ Unauthorized: PO Vendor (${po.vendor.toString()}) does not match Request Vendor (${vendorId})`);
+          return res.status(403).json({ message: "Unauthorized: This PO does not belong to the vendor" });
+      }
 
-        // Check if token exists
-        if (!token) {
-            console.log("❌ Token is missing in the request body");
-            return res.status(400).json({ message: "Token is required" });
-        }
+      // Update the PO with vendor shipping update
+      po.vendorConfirmation.confirmed = true;
+      po.vendorConfirmation.confirmedAt = new Date();
+      po.deliveryStatus = "shipped"; 
+      po.trackingNumber = trackingNumber;
+      po.carrier = carrier;
 
-        console.log("🔹 Fetching vendor ID from: http://localhost:4000/api/vendors/me");
-        console.log("🔹 Using token:", token);
+      await po.save();
 
-        // Step 1: Fetch the vendor ID using the user ID
-        const vendorResponse = await fetch("http://localhost:4000/api/vendors/me", {
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-            },
-        });
+      console.log("✅ PO confirmed successfully:", po);
 
-        if (!vendorResponse.ok) {
-            console.log("❌ Failed to fetch vendor ID");
-            return res.status(404).json({ message: "Vendor not found" });
-        }
-
-        const vendorData = await vendorResponse.json();
-        const vendorId = vendorData._id;
-        console.log("✅ Fetched Vendor ID:", vendorId);
-
-        // Step 2: Find the purchase order
-        console.log("🔹 Searching for Purchase Order with ID:", poId);
-        const po = await PurchaseOrder.findById(poId);
-        if (!po) {
-            console.log("❌ Purchase Order not found with ID:", poId);
-            return res.status(404).json({ message: "Purchase Order not found" });
-        }
-
-        console.log("✅ Found Purchase Order:", po);
-
-        // Step 3: Check if the vendor is authorized to update this PO
-        console.log("🔹 Checking vendor authorization...");
-        console.log("   - PO Vendor ID:", po.vendor.toString());
-        console.log("   - Fetched Vendor ID:", vendorId);
-
-        if (po.vendor.toString() !== vendorId) {
-            console.log("❌ Unauthorized: Vendor ID mismatch");
-            return res.status(403).json({ message: "Unauthorized" });
-        }
-
-        console.log("✅ Vendor is authorized to update this PO");
-
-        // Step 4: Update the delivery status and tracking information
-        console.log("🔹 Updating delivery status and tracking information...");
-        po.deliveryStatus = deliveryStatus;
-        if (deliveryStatus === "shipped") {
-            po.trackingNumber = trackingNumber;
-            po.carrier = carrier;
-        }
-
-        console.log("🔹 Updated PO Data:", {
-            deliveryStatus: po.deliveryStatus,
-            trackingNumber: po.trackingNumber,
-            carrier: po.carrier,
-        });
-
-        await po.save();
-        console.log("✅ Purchase Order saved successfully");
-
-        // Step 5: Notify the buyer
-        if (deliveryStatus === "shipped") {
-            console.log("🔹 Notifying buyer about shipment...");
-            await notifyPOShipped(po.procurementOfficer, po);
-        } else if (deliveryStatus === "delivered") {
-            console.log("🔹 Notifying buyer about delivery...");
-            await notifyPODelivered(po.procurementOfficer, po);
-        }
-
-        console.log("✅ Notifications sent successfully");
-
-        res.status(200).json({
-            message: `Delivery status updated to ${deliveryStatus}`,
-            po,
-        });
-    } catch (err) {
-        console.error("❌ Error in updateDeliveryStatus:", err);
-        res.status(500).json({ message: "Server error", error: err.message });
-    }
+      res.status(200).json({ message: "Purchase Order confirmed successfully", po });
+  } catch (err) {
+      console.error("❌ Error confirming PO:", err);
+      res.status(500).json({ message: "Server error", error: err.message });
+  }
 };
-
 
   exports.confirmDelivery = async (req, res) => {
     try {

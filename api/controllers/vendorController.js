@@ -6,7 +6,8 @@ const fs = require('fs');
 const nodemailer = require('nodemailer');
 const PDFDocument = require('pdfkit');
 const crypto = require('crypto');
-
+const calculatePreQualScore = require("../../utils/scoreCalculator");
+const VendorPreQualification = require("../../models/vendorPreQualification");
 
 
 // Email configuration
@@ -15,7 +16,28 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 // Configure multer for file upload
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        const uploadDir = 'uploads/vendor-documents/';
+        const fieldName = file.fieldname;
+        let uploadDir = 'uploads/vendor-documents/';
+        
+        // Create subdirectories based on document type
+        if (fieldName.includes('Certificate') || fieldName.includes('License')) {
+            uploadDir += 'certificates-licenses/';
+        } else if (fieldName.includes('Tax') || fieldName.includes('VAT')) {
+            uploadDir += 'tax-documents/';
+        } else if (fieldName.includes('Financial') || fieldName.includes('Audit') || fieldName.includes('Bank')) {
+            uploadDir += 'financial-documents/';
+        } else if (fieldName.includes('Experience') || fieldName.includes('Personnel') || fieldName.includes('Equipment')) {
+            uploadDir += 'technical-capacity/';
+        } else if (fieldName.includes('Client') || fieldName.includes('Project') || fieldName.includes('Performance')) {
+            uploadDir += 'past-performance/';
+        } else if (fieldName.includes('Safety') || fieldName.includes('Environment') || fieldName.includes('Sustainability')) {
+            uploadDir += 'hse-documents/';
+        } else if (fieldName.includes('CSR') || fieldName.includes('Ethics')) {
+            uploadDir += 'ethics-governance/';
+        } else {
+            uploadDir += 'other-documents/';
+        }
+        
         // Create directory if it doesn't exist
         if (!fs.existsSync(uploadDir)) {
             fs.mkdirSync(uploadDir, { recursive: true });
@@ -23,21 +45,61 @@ const storage = multer.diskStorage({
         cb(null, uploadDir);
     },
     filename: function (req, file, cb) {
-        // Generate unique filename
+        // Generate descriptive filename with purpose
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, 'power-of-attorney-' + uniqueSuffix + path.extname(file.originalname));
+        const fieldName = file.fieldname;
+        const originalName = path.parse(file.originalname).name;
+        const extension = path.extname(file.originalname);
+        
+        // Map field names to human-readable purposes
+        const purposeMap = {
+            'registrationCertificate': 'Business-Registration-Certificate',
+            'businessLicense': 'Business-License',
+            'taxClearance': 'Tax-Clearance-Certificate',
+            'vatRegistration': 'VAT-Registration',
+            'industryLicenses': 'Industry-License',
+            'auditedStatements': 'Audited-Financial-Statement',
+            'relevantExperience': 'Relevant-Experience-Document',
+            'keyPersonnel': 'Key-Personnel-CV',
+            'equipmentFacilities': 'Equipment-Facilities',
+            'qualityCertifications': 'Quality-Certification',
+            'clientReferences': 'Client-Reference',
+            'completedProjects': 'Completed-Project',
+            'safetyRecords': 'Safety-Record',
+            'sustainabilityPractices': 'Sustainability-Practice',
+            'environmentCertificate': 'Environment-Certificate',
+            'csrInitiatives': 'CSR-Initiative'
+        };
+        
+        const purpose = purposeMap[fieldName] || fieldName;
+        
+        // Format: purpose-originalname-timestamp-random.extension
+        const filename = `${purpose}-${originalName}-${uniqueSuffix}${extension}`;
+        cb(null, filename);
     }
 });
 
 const fileFilter = (req, file, cb) => {
-    // Accept only PDF, DOC, DOCX files
-    const allowedTypes = ['.pdf', '.doc', '.docx'];
+    // Accept only specific file types based on field name
+    const allowedTypes = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png'];
     const fileExt = path.extname(file.originalname).toLowerCase();
+    
+    // Different file requirements for different document types
+    const financialDocuments = ['auditedStatements', 'taxClearance', 'vatRegistration'];
+    const imageDocuments = ['registrationCertificate', 'businessLicense', 'environmentCertificate'];
+    
+    if (financialDocuments.includes(file.fieldname) && !['.pdf', '.xlsx', '.xls'].includes(fileExt)) {
+        return cb(new Error('Financial documents must be PDF or Excel files'), false);
+    }
+    
+    if (imageDocuments.includes(file.fieldname) && !['.jpg', '.jpeg', '.png', '.pdf'].includes(fileExt)) {
+        return cb(new Error('Certificates must be image files or PDF'), false);
+    }
     
     if (allowedTypes.includes(fileExt)) {
         cb(null, true);
     } else {
-        cb(new Error('Only PDF, DOC, and DOCX files are allowed'), false);
+        cb(new Error('Only PDF, DOC, DOCX, JPG, JPEG, and PNG files are allowed'), false);
     }
 };
 
@@ -48,6 +110,31 @@ const upload = multer({
     },
     fileFilter: fileFilter
 });
+
+const uploadDocs = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter
+}).fields([
+  { name: "registrationCertificate", maxCount: 1 },
+  { name: "businessLicense", maxCount: 1 },
+  { name: "taxClearance", maxCount: 1 },
+  { name: "vatRegistration", maxCount: 1 },
+  { name: "industryLicenses", maxCount: 10 },
+  { name: "auditedStatements", maxCount: 5 },
+  { name: "relevantExperience", maxCount: 5 },
+  { name: "keyPersonnel", maxCount: 5 },
+  { name: "equipmentFacilities", maxCount: 5 },
+  { name: "qualityCertifications", maxCount: 5 },
+  { name: "clientReferences", maxCount: 5 },
+  { name: "completedProjects", maxCount: 5 },
+  { name: "safetyRecords", maxCount: 5 },
+  { name: "sustainabilityPractices", maxCount: 5 },
+  { name: "csrInitiatives", maxCount: 5 },
+  { name: "environmentCertificate", maxCount: 1 }
+]);
+
+exports.uploadDocs = uploadDocs;
 
 // Register a new vendor with complete registration information
 {/*exports.registerVendor = async (req, res) => {
@@ -334,6 +421,7 @@ exports.addVendor = async (req, res) => {
       categories, 
       companyName,
       businessName,
+      industry,
       taxpayerIdentificationNumber,
       registrationNumber,
       companyType,
@@ -379,6 +467,7 @@ exports.addVendor = async (req, res) => {
       address, // Add this field
       companyName: companyName || `${firstName} ${lastName} Company`,
       role: "Vendor",
+      industry,
       company: requestingUser.company, // Add company reference
       registrationToken,
       registrationTokenExpires,
@@ -409,20 +498,18 @@ exports.addVendor = async (req, res) => {
       categories: Array.isArray(categories) ? categories : [],
       businessCategory: categories && categories.length > 0 ? categories[0] : 'General', // Use first category as business category
       businessName: businessName || companyName || `${firstName} ${lastName} Company`,
-      taxpayerIdentificationNumber: taxpayerIdentificationNumber || `TIN-${Date.now()}`, // Use provided or generate temporary
-      registrationNumber: registrationNumber || `REG-${Date.now()}`, // Use provided or generate temporary
       companyType: companyType || "Private Limited Company",
       formOfBusiness: formOfBusiness || "Limited Liability Company",
       ownershipType: ownershipType || "Private Ownership",
       countryOfRegistration: countryOfRegistration,
       tinIssuedDate: new Date(),
       registrationIssuedDate: new Date(),
-      registrationStatus: "approved", // Auto-approve for old method
+      registrationStatus: "pending",
       termsAccepted: true,
       termsAcceptedDate: new Date(),
-      user: requestingUser._id, // Reference to the requesting user
-      company: requestingUser.company, // Reference to the company
-      vendor: savedVendorUser._id // Reference to the vendor user account
+      user: requestingUser._id, 
+      company: requestingUser.company, 
+      vendor: savedVendorUser._id 
     });
 
     // Create registration link
@@ -506,6 +593,88 @@ exports.addVendor = async (req, res) => {
 };
 
 
+// Send pre-qualification results via email
+exports.sendPreQualEmail = async (req, res) => {
+  try {
+    const { tenderTitle, preQualStatus, preQualScore, vendorId } = req.body;
+    
+    // Get vendor details
+    const vendor = await Vendor.findById(vendorId).populate('vendor');
+    if (!vendor) {
+      return res.status(404).json({ message: "Vendor not found" });
+    }
+
+    const vendorEmail = vendor.vendor?.email;
+    if (!vendorEmail) {
+      return res.status(400).json({ message: "Vendor email not found" });
+    }
+
+    // Email content based on status
+    let subject, html;
+    
+    if (preQualStatus === "approved") {
+      subject = `Pre-qualification Approved for ${tenderTitle}`;
+      html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #4CAF50;">Pre-qualification Approved</h2>
+          <p>Dear ${vendor.vendor.firstName || "Vendor"},</p>
+          <p>We are pleased to inform you that your pre-qualification for the tender <strong>${tenderTitle}</strong> has been <strong>approved</strong>.</p>
+          <p>Your pre-qualification score: <strong>${preQualScore}/100</strong></p>
+          <p>You may now proceed with the full application process for this tender.</p>
+          <p>Best regards,<br/>Procurement Team</p>
+        </div>
+      `;
+    } else {
+      subject = `Pre-qualification Results for ${tenderTitle}`;
+      html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #E53935;">Pre-qualification Results</h2>
+          <p>Dear ${vendor.vendor.firstName || "Vendor"},</p>
+          <p>Thank you for your interest in the tender <strong>${tenderTitle}</strong>.</p>
+          <p>After reviewing your pre-qualification submission, we regret to inform you that your application did not meet the minimum requirements at this time.</p>
+          <p>Your pre-qualification score: <strong>${preQualScore}/100</strong></p>
+          <p>Minimum required score: <strong>70/100</strong></p>
+          <h3>Areas for Improvement:</h3>
+          <ul>
+            <li>Ensure all required documents are submitted</li>
+            <li>Provide complete financial statements</li>
+            <li>Include relevant experience and past performance records</li>
+            <li>Verify all legal and compliance documentation</li>
+          </ul>
+          <p>You are welcome to update your vendor profile and try again in the future.</p>
+          <p>For specific feedback on your application, please contact our procurement department.</p>
+          <p>Best regards,<br/>Procurement Team</p>
+        </div>
+      `;
+    }
+
+    // Send email using your existing email system
+    const msg = {
+      to: vendorEmail,
+      from: {
+        name: 'Procurement System',
+        email: process.env.SENDGRID_FROM_EMAIL || 'noreply@nexusmwi.com'
+      },
+      subject: subject,
+      html: html
+    };
+
+    await sgMail.send(msg);
+
+    res.status(200).json({ 
+      success: true, 
+      message: "Pre-qualification email sent successfully" 
+    });
+
+  } catch (err) {
+    console.error("Error sending pre-qual email:", err);
+    res.status(500).json({ 
+      success: false, 
+      message: "Failed to send email",
+      error: err.message 
+    });
+  }
+};
 
 
 exports.getVendorsAdmin = async (req, res) => {
@@ -933,126 +1102,68 @@ const sendRegistrationRejectionEmail = async (vendorData) => {
 // Updated registerVendor function
 exports.registerVendor = async (req, res) => {
   try {
-    
-    const {
-      countryOfRegistration,
-      businessName,
-      taxpayerIdentificationNumber,
-      tinIssuedDate,
-      companyType,
-      formOfBusiness,
-      ownershipType,
-      selectBusiness,
-      registrationNumber,
-      registrationIssuedDate,
-      termsAccepted,
-      phoneNumber
-    } = req.body;
+    console.log("Incoming Vendor Registration Request:", req.body);
+    // Parse JSON fields (frontend will send FormData)
+    const body = JSON.parse(req.body.data);
 
-    console.log(req.body);
+    // Extract uploaded files
+    const files = req.files;
+    const docMapper = (field) =>
+      files[field]?.map((f) => ({
+        fileName: f.originalname,
+        filePath: f.path,
+        size: f.size,
+        uploadedAt: new Date(),
+      })) || [];
 
-    // Validate required fields
-    if (!businessName || !taxpayerIdentificationNumber || !registrationNumber) {
-      return res.status(400).json({ 
-        message: "Missing required fields" 
-      });
-    }
-
-    if (!termsAccepted) {
-      return res.status(400).json({ 
-        message: "Terms and conditions must be accepted" 
-      });
-    }
-
-    // Check if vendor already exists
-    const existingVendor = await Vendor.findOne({
-      $or: [
-        { taxpayerIdentificationNumber },
-        { registrationNumber }
-      ]
-    });
-
-    if (existingVendor) {
-      let message = "Vendor already exists with this ";
-    if (existingVendor.taxpayerIdentificationNumber === taxpayerIdentificationNumber) message += "TIN";
-      else if (existingVendor.registrationNumber === registrationNumber) message += "registration number";
-      
-      return res.status(400).json({ message });
-    }
-
-    // Handle file upload information
-    let powerOfAttorneyInfo = {};
-    if (req.file) {
-      powerOfAttorneyInfo = {
-        fileName: req.file.originalname,
-        filePath: req.file.path,
-        fileSize: req.file.size,
-        uploadDate: new Date()
-      };
-    }
-
-    // Save vendor information
+    // Create vendor
     const vendor = await Vendor.create({
-       vendor:req.user._id,
-      name: businessName,
-      phone: phoneNumber,
-      address: `${countryOfRegistration}`,
-      categories: [selectBusiness],
-      countryOfRegistration,
-      businessName,
-      taxpayerIdentificationNumber,
-      tinIssuedDate: new Date(tinIssuedDate),
-      companyType,
-      formOfBusiness,
-      ownershipType,
-      businessCategory: selectBusiness,
-      registrationNumber,
-      registrationIssuedDate: new Date(registrationIssuedDate),
-      powerOfAttorney: powerOfAttorneyInfo,
-      termsAccepted: true,
-      termsAcceptedDate: new Date(),
+      ...body,
+      vendor: req.user._id,
+      user: req.user._id,
+      name: req.user.firstName + " " + req.user.lastName,
       registrationStatus: "pending",
-      submissionDate: new Date()
+      submissionDate: new Date(),
+      documents: {
+        registrationCertificate: docMapper("registrationCertificate")[0] || null,
+        businessLicense: docMapper("businessLicense")[0] || null,
+        taxClearance: docMapper("taxClearance")[0] || null,
+        vatRegistration: docMapper("vatRegistration")[0] || null,
+        industryLicenses: docMapper("industryLicenses"),
+        auditedStatements: docMapper("auditedStatements"),
+        relevantExperience: docMapper("relevantExperience"),
+        keyPersonnel: docMapper("keyPersonnel"),
+        equipmentFacilities: docMapper("equipmentFacilities"),
+        qualityCertifications: docMapper("qualityCertifications"),
+        clientReferences: docMapper("clientReferences"),
+        completedProjects: docMapper("completedProjects"),
+        safetyRecords: docMapper("safetyRecords"),
+        sustainabilityPractices: docMapper("sustainabilityPractices"),
+        csrInitiatives: docMapper("csrInitiatives"),
+        environmentCertificate: docMapper("environmentCertificate")[0] || null,
+      },
     });
 
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    } else {
-      // Update user with vendor information
-      user.registrationStatus = "pending";           
-      await user.save();
-    }
-    // Generate PDF with registration details
-    const pdfPath = await generateVendorRegistrationPDF({
-      ...req.body,
-      submissionDate: new Date()
+    // Run Pre-qualification scoring
+    const preQualData = { ...body, companyInfo: body, legalCompliance: body, financialCapability: body, technicalCapacity: body, pastPerformance: body, hse: body, ethicsGovernance: body };
+    const { score, status, reasons } = calculatePreQualScore(preQualData);
+
+    await VendorPreQualification.create({
+      vendorId: vendor._id,
+      ...preQualData,
+      score,
+      status,
+      reasons,
     });
 
-    // Send email notification with PDF attachment
-    await sendRegistrationEmail(vendor, pdfPath);
-
-    // Clean up the temporary PDF file
-    fs.unlinkSync(pdfPath);
-
-    res.status(201).json({ 
-      message: "Vendor registration submitted successfully. You will receive notification once reviewed.", 
-      vendor: {
-        id: vendor._id,
-        businessName: vendor.businessName,
-        registrationStatus: vendor.registrationStatus,
-        submissionDate: vendor.submissionDate
-      }
+    res.status(201).json({
+      success: true,
+      message: "Vendor registration submitted.",
+      vendor,
+      preQualification: { score, status, reasons },
     });
-
   } catch (err) {
     console.error("Error registering vendor:", err);
-    
-    // Clean up uploaded file if vendor creation failed
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-    
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };

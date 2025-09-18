@@ -10,7 +10,7 @@ const VendorSchema = new mongoose.Schema({
     },
     email: {
         type: String,
-        required: [true, "Email is required"],
+        required: [false, "Email is required"],
         unique: true,
         lowercase: true,
         trim: true,
@@ -60,13 +60,13 @@ const VendorSchema = new mongoose.Schema({
     // Legal Information
     taxpayerIdentificationNumber: {
         type: String,
-        required: true,
+      
         unique: true,
         trim: true
     },
     registrationNumber: {
         type: String,
-        required: true,
+       
         unique: true,
         trim: true
     },
@@ -122,7 +122,7 @@ const VendorSchema = new mongoose.Schema({
     company: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Company",
-        required: [true, "Company reference is required"]
+        required: [false, "Company reference is required"]
     },
     // Vendor reference (references the User with role "Vendor")
     vendor: {

@@ -89,6 +89,9 @@ const driverRoutes = require("./routes/driverRoutes");
 const invitationRoutes = require("./routes/invitationRoutes");
 const budgetRoutes = require("./routes/budgetRoutes");
 const billingRoutes = require("./routes/billingRoutes");
+const tendersRoutes = require("./routes/tendersRoutes");
+const vendorPreQualificationRoutes = require("./routes/vendorPreQualificationRoutes");
+
 // Initialize usage monitoring
 const { scheduleMonthlyReset } = require('./utils/usageUtils');
 const { scheduleUsageAlerts } = require('./api/services/usageAlertsService');
@@ -110,7 +113,9 @@ app.use("/api/travel-requests", travelRequestRoutes);
 app.use("/api/departments", departmentsRoutes);
 app.use("/api/drivers", driverRoutes);
 app.use("/api/invitations", invitationRoutes);
-app.use("/api/billing", billingRoutes); // This still handles non-webhook billing routes
+app.use("/api/billing", billingRoutes); 
+app.use("/api/tenders", tendersRoutes);
+app.use("/api/prequalifications", vendorPreQualificationRoutes);
 
 // New budget allocation routes
 app.use("/api/budget-allocations", budgetRoutes);

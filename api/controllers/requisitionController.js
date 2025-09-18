@@ -473,7 +473,10 @@ exports.rejectRequisition = async (req, res) => {
 exports.getMyRequisitions = async (req, res) => {
     try {
         const requisitions = await Requisition.find({ employee: req.user._id })
-        .populate('employee', 'firstName lastName phoneNumber email');
+        .populate('employee', 'firstName lastName phoneNumber email')
+        .populate('department', 'name departmentCode')
+        .populate('company', 'name industry')   
+        .populate('approver', 'firstName lastName email');
         res.json(requisitions);
     } catch (err) {
         res.status(500).json({ message: "Server error", error: err.message });
