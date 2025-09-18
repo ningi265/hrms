@@ -139,4 +139,6 @@ router.get('/pending/registration',
         "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), 
     vendorController.getPendingRegistrations
 );
+
+
 module.exports = router;

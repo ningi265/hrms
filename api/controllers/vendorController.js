@@ -418,10 +418,10 @@ exports.addVendor = async (req, res) => {
       email, 
       phoneNumber, 
       address, 
+      industry,
       categories, 
       companyName,
       businessName,
-      industry,
       taxpayerIdentificationNumber,
       registrationNumber,
       companyType,
@@ -468,6 +468,7 @@ exports.addVendor = async (req, res) => {
       companyName: companyName || `${firstName} ${lastName} Company`,
       role: "Vendor",
       industry,
+      industry: industry || "General",
       company: requestingUser.company, // Add company reference
       registrationToken,
       registrationTokenExpires,
@@ -1187,7 +1188,8 @@ exports.getVendorRegistrationData = async (req, res) => {
 
     try {
         const registrationData = await Vendor.findOne({ vendor: vendorId })
-            .populate('vendor', 'firstName lastName phoneNumber email');
+            .populate('vendor', 'firstName lastName phoneNumber email')
+            ;
 
         if (!registrationData) {
             return res.status(404).json({ message: "Registration data not found for this vendor." });
