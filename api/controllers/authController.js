@@ -1227,6 +1227,105 @@ exports.register = async (req, res) => {
 };
 
 
+
+exports.googleLogin = async (req, res) => {
+  try {
+    console.log("Incoming Google Login Request:", req.body);
+
+    const { email, firstName, lastName, googleId, companyName, industry, role } = req.body;
+
+    // Validate required field (email at minimum)
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    // Check if user exists
+    let user = await User.findOne({ email });
+
+    if (user) {
+      // ✅ User already exists → login
+      const token = generateToken(user);
+      return res.status(200).json({
+        exists: true,
+        message: "Login successful",
+        user,
+        token,
+      });
+    }
+
+    // ❌ User does not exist → let frontend continue registration
+    // If you want backend to auto-create user directly, uncomment the block below
+    /*
+    let company = await Company.findOne({ name: companyName });
+    if (!company && companyName) {
+      company = await Company.create({
+        name: companyName,
+        industry,
+        domain: companyName.toLowerCase().replace(/\s+/g, "-") + ".com",
+      });
+    }
+
+    const now = new Date();
+    const trialEnd = new Date(now);
+    trialEnd.setDate(now.getDate() + 14);
+
+    user = await User.create({
+      firstName,
+      lastName,
+      email,
+      googleId,
+      company: company ? company._id : null,
+      companyName: company ? company.name : null,
+      industry,
+      role: role || "Other",
+      isEnterpriseAdmin: company ? company.usersCount === 0 : false,
+      isVerified: true, // ✅ Google verified
+      isEmailVerified: true,
+      billing: {
+        subscription: {
+          plan: "trial",
+          status: "trialing",
+        },
+        trialStartDate: now,
+        trialEndDate: trialEnd,
+      },
+    });
+
+    if (company) {
+      await Company.findByIdAndUpdate(company._id, { $inc: { usersCount: 1 } });
+    }
+
+    const token = generateToken(user);
+
+    return res.status(201).json({
+      exists: true,
+      message: "Google signup successful",
+      user: {
+        id: user._id,
+        firstName,
+        lastName,
+        email,
+        company: user.companyName,
+        role: user.role,
+        isEnterpriseAdmin: user.isEnterpriseAdmin,
+      },
+      token,
+    });
+    */
+
+    return res.status(200).json({
+      exists: false,
+      message: "User not found. Continue registration",
+    });
+  } catch (err) {
+    console.error("Error during Google login:", err);
+    res.status(500).json({
+      message: "Server error during Google login",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
+  }
+};
+
 // authController.js - Enhanced login with debugging
 exports.login = async (req, res) => {
   try {

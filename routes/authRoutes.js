@@ -35,7 +35,8 @@ const {
   getEmployees,
   getEmployeeById,
   completeRegistration,
-  getUsersForManagement
+  getUsersForManagement,
+  googleLogin
 } = require("../api/controllers/authController");
 const { protect } = require("../api/middleware/authMiddleware");
 
@@ -44,6 +45,7 @@ const router = express.Router();
 // Authentication routes
 router.post("/login", login);
 router.post("/register", register);
+router.post("/google-login", googleLogin);
 
 // Phone verification routes
 router.post("/verify", verifyPhone);

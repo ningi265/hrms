@@ -8,46 +8,35 @@ const mongoose = require("mongoose");
 const sgMail = require('@sendgrid/mail');
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-
 exports.createTender = async (req, res) => {
-    // Check for user ID in the correct property
     if (!req.user || !req.user._id) {
         return res.status(401).json({ message: "Authentication required" });
     }
 
     const requestingUser = await User.findById(req.user._id)
-    .select('company isEnterpriseAdmin role department');
+        .select("company isEnterpriseAdmin role department");
     if (!requestingUser) {
         return res.status(404).json({ message: "User not found" });
     }
 
     const allowedRoles = [
-            "employee", "procurement_officer", "IT/Technical",
-            "Executive (CEO, CFO, etc.)", "Management", 
-            "Sales/Marketing", "Enterprise(CEO, CFO, etc.)",
-            "Sales Representative",
-            "Sales Manager",
-            "Marketing Specialist",
-            "Marketing Manager",
-            "HR Specialist",
-            "HR Manager",
-            "Office Manager",
-            "Customer Support Representative",
-            "Customer Success Manager"
+        "employee", "procurement_officer", "IT/Technical",
+        "Executive (CEO, CFO, etc.)", "Management", 
+        "Sales/Marketing", "Enterprise(CEO, CFO, etc.)",
+        "Sales Representative", "Sales Manager",
+        "Marketing Specialist", "Marketing Manager",
+        "HR Specialist", "HR Manager", "Office Manager",
+        "Customer Support Representative", "Customer Success Manager"
     ];
 
-    if (!requestingUser.isEnterpriseAdmin && 
-        !allowedRoles.includes(requestingUser.role)) {
+    if (!requestingUser.isEnterpriseAdmin && !allowedRoles.includes(requestingUser.role)) {
         return res.status(403).json({ 
             success: false,
-            message: "Unauthorized to create requisitions",
+            message: "Unauthorized to create tenders",
             requiredRole: "One of: " + allowedRoles.join(", ")
         });
     }
-    
-    console.log('Received data:', req.body);
-    console.log('User from JWT:', req.user);
-    
+
     try {
         const { 
             title, 
@@ -58,93 +47,106 @@ exports.createTender = async (req, res) => {
             urgency,
             location,
             requisitionId,
-            requirements
+            requirements,
+            technicalSpecs,
+            paymentTerms,
+            evaluationCriteria
         } = req.body;
 
         // Validate required fields
-    if (!title || !budget || !category || !location) {
-        return res.status(400).json({ 
-        message: "budget, category, location are required" 
-        });
-    }
+        if (!title || !budget || !category || !location) {
+            return res.status(400).json({ 
+                message: "title, budget, category, and location are required" 
+            });
+        }
 
-        // Validate deadline is in the future
-    if (deadline && new Date(deadline) <= new Date()) {
-        return res.status(400).json({ 
-        message: "Deadline must be in the future" 
-        });
-    }
+        // Validate deadline
+        if (deadline && new Date(deadline) <= new Date()) {
+            return res.status(400).json({ message: "Deadline must be in the future" });
+        }
 
-        // Get procurement officer details for email
-    const procurementOfficer = await User.findById(req.user._id)
-        .select('firstName lastName email companyName');
-    
-
-       // Validate requisition if provided
-    let requisition = null;
-    if (requisitionId) {
+        // Validate requisition if provided
+        let requisition = null;
+        if (requisitionId) {
             requisition = await Requisition.findById(requisitionId);
             if (!requisition) {
                 return res.status(400).json({ message: "Invalid requisition ID provided" });
             }
-            
-            // Check if requisition is approved
-            if (requisition.status !== 'approved') {
-                return res.status(400).json({ 
-                    message: "Only approved requisitions can be used to create RFQs" 
-            });
+            if (requisition.status !== "approved") {
+                return res.status(400).json({ message: "Only approved requisitions can be linked to a tender" });
+            }
         }
-    }
 
-        // Create the RFQ with all the enhanced fields
-    const tender = await Tenders.create({
-        procurementOfficer: req.user._id,
-        company: requestingUser.company,
-        department: requestingUser.department,
-        title: title,
-         status: "open",
-        deadline: deadline ? new Date(deadline) : null,
-        description: description || '',
-        budget: budget ? parseFloat(budget) : null,
-        urgency: urgency || 'medium',
-        location: location || '',
-        requisitionId: requisitionId || null,
-        requirements: requirements
-       
+        const parsedRequirements = Array.isArray(requirements) 
+            ? requirements 
+            : requirements?.split(",").map(r => r.trim()) || [];
+
+        // Create tender
+        let tender = await Tenders.create({
+            procurementOfficer: req.user._id,
+            company: requestingUser.company,
+            department: requestingUser.department,
+            title,
+            status: "open",
+            deadline: deadline ? new Date(deadline) : null,
+            description: description || "",
+            budget: budget ? parseFloat(budget) : null,
+            urgency: urgency || "medium",
+            location: location || "",
+            requisitionId: requisitionId || null,
+            requirements: parsedRequirements,
+            technicalSpecs: technicalSpecs || "",
+            paymentTerms: paymentTerms || "",
+            evaluationCriteria: evaluationCriteria || ""
         });
 
-        // Prepare email notification details
-        const formattedDeadline = deadline 
-            ? new Date(deadline).toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            })
-            : 'Not specified';
-       
+        // 🔥 Populate the company so we can return its name
+        tender = await tender.populate("company", "name");
+
         res.status(201).json({ 
             success: true,
             message: "Tender created successfully", 
             tender: {
                 id: tender._id,
-                title: tender.itemName,
+                title: tender.title,
                 deadline: tender.deadline,
-                urgency: tender.priority,
+                urgency: tender.urgency,
+                requirements: tender.requirements,
+                description: tender.description,
                 status: tender.status,
-                createdAt: tender.createdAt
-            },
+                createdAt: tender.createdAt,
+                company: { 
+                    _id: tender.company._id, 
+                    name: tender.company.name 
+                },
+                procurementOfficer: tender.procurementOfficer,
+                requisitionId: tender.requisitionId || null,
+                budget: tender.budget,
+                location: tender.location,
+                bidCount: 0,
+                vendorCount: 0,
+                daysUntilDeadline: tender.deadline
+                    ? Math.ceil((new Date(tender.deadline).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
+                    : null,
+                completionPercentage: 0,
+                statusColor: "green",
+                priorityColor: tender.urgency === "high" ? "red" : (tender.urgency === "medium" ? "yellow" : "green")
+            }
         });
 
     } catch (err) {
-        console.error('Error creating RFQ:', err);
+        console.error("Error creating tender:", err);
         res.status(500).json({ 
             success: false,
-            message: "Server error while creating RFQ", 
-            error: process.env.NODE_ENV === 'development' ? err.message : undefined,
-            code: "RFQ_CREATION_FAILED"
+            message: "Server error while creating tender", 
+            error: process.env.NODE_ENV === "development" ? err.message : undefined,
+            code: "TENDER_CREATION_FAILED"
         });
     }
 };
+
+
+
 // Get all RFQs (Procurement Officers & Admins)
 exports.getAllTenders = async (req, res) => {
     try {
@@ -266,6 +268,67 @@ function getPriorityColor(priority) {
     default: return 'gray';
   }
 }
+
+
+
+exports.getTenderById = async (req, res) => {
+    try {
+        const tender = await Tenders.findById(req.params.id)
+            .populate("procurementOfficer", "firstName lastName email")
+            .populate("company", "name")
+            .populate("requisitionId", "itemName status")
+            .populate("bids.vendor", "name contactEmail");
+        if (!tender) {
+            return res.status(404).json({ message: "Tender not found" });
+        }
+        res.json(tender);
+    } catch (err) {
+        res.status(500).json({ message: "Server error", error: err.message });
+    }
+};
+
+
+exports.selectBid = async (req, res) => {
+  try{
+    const {vendorId} = reqbody;
+    const tenderId = req.params.id;
+
+    const tender = await Tenders.findById(tenderId);
+
+    if(!tender) return res.status(404).json({message:"Tender not found"});
+    if(tender.status === "closed") return res.status(400).json({message:"Tender is already closed"});
+    if(tender.bids.length === 0) return res.status(400).json({message:"No bids available"});
+
+    const selectedBid = tender.bids.find(bid =>
+        bid.vendor.toString() === vendorId.toString()
+    );
+
+    if(!selectedBid){
+      return res.status(400).json({
+        message:"Invalid vendor selection",
+        debig:{
+          providedVendorId: vendorId,
+          availableBidsBendors: tender.bids.map(b => b.vendor.toString()),
+          allVendors: tender.vendors.map(v => v._id.toString())
+        }
+      });
+    }
+    tender.status = "closed";
+    tender.selectedVendor = selectedBid.vendor;
+    await tender.save();
+
+    res.json({
+      message:"Vendor selected successfully",
+      selectedVendorId: selectedBid.vendor
+    });
+  }
+  catch (err) {
+       console.error("Error selecting vendor:", err);
+       res.status(500).json({message:"Server error", error: err.message});
+  }
+};
+
+  
 
 
 
