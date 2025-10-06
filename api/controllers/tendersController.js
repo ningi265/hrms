@@ -288,6 +288,8 @@ exports.getTenderById = async (req, res) => {
 };
 
 
+
+
 exports.selectBid = async (req, res) => {
   try{
     const {vendorId} = reqbody;
@@ -327,6 +329,149 @@ exports.selectBid = async (req, res) => {
        res.status(500).json({message:"Server error", error: err.message});
   }
 };
+
+
+exports.createBid = async (req, res) => {
+  try {
+    const { tenderId, vendorId, bidAmount, proposal, documents } = req.body;
+
+    // Validate required fields
+    if (!tenderId || !vendorId || !proposal) {
+      return res.status(400).json({
+        success: false,
+        message: "Tender ID, Vendor ID, and bid amount are required"
+      });
+    }
+
+    // Check if vendor exists and is pre-qualified
+    const vendor = await Vendor.findById(vendorId);
+    if (!vendor) {
+      return res.status(404).json({
+        success: false,
+        message: "Vendor not found"
+      });
+    }
+
+    // Check if tender exists and is open
+    const tender = await Tender.findById(tenderId);
+    if (!tender) {
+      return res.status(404).json({
+        success: false,
+        message: "Tender not found"
+      });
+    }
+
+    if (tender.status !== "open") {
+      return res.status(400).json({
+        success: false,
+        message: "Tender is no longer accepting bids"
+      });
+    }
+
+    // Check if vendor has already submitted a bid for this tender
+    const existingBid = await Bid.findOne({ tenderId, vendorId });
+    if (existingBid) {
+      return res.status(400).json({
+        success: false,
+        message: "You have already submitted a bid for this tender"
+      });
+    }
+
+    // Create new bid
+    const bid = new Bid({
+      tenderId,
+      vendorId,
+      bidAmount,
+      proposal: proposal || "",
+      documents: documents || [],
+      status: "submitted",
+      submittedAt: new Date()
+    });
+
+    await bid.save();
+
+    // Send bid confirmation email
+    await sendBidConfirmationEmail(vendor, tender, bid);
+
+    res.status(201).json({
+      success: true,
+      message: "Bid submitted successfully",
+      data: bid
+    });
+
+  } catch (err) {
+    console.error("Error creating bid:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to submit bid",
+      error: err.message
+    });
+  }
+};
+
+// Email function for bid confirmation
+const sendBidConfirmationEmail = async (vendor, tender, bid) => {
+  try {
+    const vendorEmail = vendor.vendor?.email || vendor.email;
+
+    const subject = `Bid Submitted Successfully - ${tender.title}`;
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #4CAF50;">Bid Submission Confirmed</h2>
+        <p>Dear ${vendor.vendor?.firstName || "Vendor"},</p>
+        
+        <p>Your bid has been successfully submitted for the tender: <strong>${tender.title}</strong></p>
+        
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+          <h3 style="margin-top: 0;">Bid Details:</h3>
+          <p><strong>Bid Amount:</strong> $${bid.bidAmount.toLocaleString()}</p>
+          <p><strong>Tender Reference:</strong> ${tender._id}</p>
+          <p><strong>Submission Date:</strong> ${new Date(bid.submittedAt).toLocaleDateString()}</p>
+          <p><strong>Bid Status:</strong> Submitted for review</p>
+        </div>
+
+        <h3>Next Steps:</h3>
+        <ol>
+          <li><strong>Technical Evaluation:</strong> Your bid will undergo technical evaluation (3-5 business days)</li>
+          <li><strong>Financial Evaluation:</strong> Qualified bids will proceed to financial evaluation</li>
+          <li><strong>Award Notification:</strong> Successful bidders will be notified via email</li>
+          <li><strong>Contract Signing:</strong> Final contract negotiation and signing</li>
+        </ol>
+
+        <p><strong>Important Notes:</strong></p>
+        <ul>
+          <li>Keep all supporting documents ready for verification</li>
+          <li>Ensure your contact information is up to date</li>
+          <li>Monitor your email for any clarification requests</li>
+          <li>The evaluation process typically takes 2-3 weeks</li>
+        </ul>
+
+        <p>You can check your bid status anytime in your vendor portal.</p>
+
+        <p>Best regards,<br/>
+        <strong>Procurement Team</strong><br/>
+        Nexus Procurement System</p>
+      </div>
+    `;
+
+    const msg = {
+      to: vendorEmail,
+      from: {
+        name: 'Nexus Procurement',
+        email: process.env.SENDGRID_FROM_EMAIL || 'noreply@nexusmwi.com'
+      },
+      subject: subject,
+      html: html
+    };
+
+    await sgMail.send(msg);
+
+  } catch (err) {
+    console.error("Error sending bid confirmation email:", err);
+    // Don't throw error - email failure shouldn't prevent bid submission
+  }
+};
+
 
   
 

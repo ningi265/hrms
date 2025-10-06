@@ -18,6 +18,19 @@ const TendersSchema = new mongoose.Schema({
       requirements: { type: [String], default: [] }, 
      
       createdAt: { type: Date, default: Date.now },
+       closedAt: {
+    type: Date,
+    default: null
+  },
+        awardedAt: {
+        type: Date,         
+        default: null
+
+    },
+      awardedTo: {type:mongoose.Schema.Types.ObjectId, ref:"Vendor", default:null},
+      awardedAmount: {type:Number, default:0},
+      awardedDocument: {type:String, default:""}, // URL or path to the document
+      
       bids: [
             {
                 vendor: {type:mongoose.Schema.Types.ObjectId, ref:"Vendor", },

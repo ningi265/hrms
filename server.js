@@ -16,10 +16,16 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 
+const allowedOrigins = [
+  'https://nexusmwi.com',
+  'https://www.nexusmwi.com',
+  'http://localhost:3000',
+];
+
 // Socket.IO setup with CORS
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:3000",
+    origin: allowedOrigins,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     credentials: true
   }
@@ -31,15 +37,31 @@ const LocationService = require('./api/services/locationService');
 // Initialize location service
 let locationService = null;
 
+app.options('*', cors({
+  origin: allowedOrigins,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+}));
+
 // CRITICAL: Stripe webhook route MUST come BEFORE any JSON parsing middleware
 const billingController = require('./api/controllers/billingController');
 app.post('/api/billing/webhook', express.raw({type: 'application/json'}), billingController.handleWebhook);
 
 // NOW add the middleware that parses JSON (after webhook route)
 app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:3000",
-  credentials: true
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
 }));
+
 app.use(bodyParser.json()); 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(express.json()); // This now comes AFTER the webhook route
@@ -91,15 +113,18 @@ const budgetRoutes = require("./routes/budgetRoutes");
 const billingRoutes = require("./routes/billingRoutes");
 const tendersRoutes = require("./routes/tendersRoutes");
 const vendorPreQualificationRoutes = require("./routes/vendorPreQualificationRoutes");
+const bidRoutes = require('./routes/bidRoutes');
 
 // Initialize usage monitoring
 const { scheduleMonthlyReset } = require('./utils/usageUtils');
 const { scheduleUsageAlerts } = require('./api/services/usageAlertsService');
+const { startTenderAutoCloseCron } = require('./api/services/tenderAutoClose');   
 
 
 
 scheduleUsageAlerts();
 scheduleMonthlyReset();
+startTenderAutoCloseCron();
 
 // Existing routes
 app.use("/api/auth", authRoutes);
@@ -116,7 +141,7 @@ app.use("/api/invitations", invitationRoutes);
 app.use("/api/billing", billingRoutes); 
 app.use("/api/tenders", tendersRoutes);
 app.use("/api/prequalifications", vendorPreQualificationRoutes);
-
+app.use('/api/bids', bidRoutes);
 // New budget allocation routes
 app.use("/api/budget-allocations", budgetRoutes);
 

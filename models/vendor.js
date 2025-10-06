@@ -44,6 +44,7 @@ const VendorSchema = new mongoose.Schema({
         trim: true,
         lowercase: true
     }],
+    
 
     businessName: {
         type: String,
@@ -176,7 +177,16 @@ const VendorSchema = new mongoose.Schema({
     updatedAt: {
         type: Date,
         default: Date.now
-    }
+    },
+     reviewedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User', // or whatever model represents the reviewer
+    required: false
+  },
+  reviewedAt: {
+    type: Date,
+    required: false
+  }
 
 }, {
     timestamps: true,

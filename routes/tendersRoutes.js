@@ -2,7 +2,8 @@ const express = require("express");
 const {
     createTender,
     getAllTenders,
-getCompanyTenders
+getCompanyTenders,
+        getTenderById,
 } = require("../api/controllers/tendersController");
 const { protect } = require("../api/middleware/authMiddleware");
 const { trackApiUsage } = require("../api/middleware/usageMiddleware");
@@ -29,6 +30,13 @@ router.get("/company", protect(["procurement_officer", "admin", "Vendor","IT/Tec
         "Management",
         "Human Resources",
         "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getCompanyTenders);
+
+
+router.get("/:id", protect(["procurement_officer", "admin", "Vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getTenderById);
 
 
 

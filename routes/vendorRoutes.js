@@ -68,7 +68,7 @@ router.get('/:vendorId', protect(["admin", "procurement_officer","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), vendorController.getVendorDetails);
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)", "Vendor"]), vendorController.getVendorDetails);
 
 // POST /api/vendors - Add vendor (legacy method for compatibility)
 router.post('/', protect(["admin", "procurement_officer","IT/Technical",
