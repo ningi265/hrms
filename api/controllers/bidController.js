@@ -140,30 +140,31 @@ exports.uploadBidDocuments = async (req, res) => {
   try {
     console.log("📨 Incoming upload request:");
     console.log("  Body:", req.body);
-    console.log("  Files:", req.files ? req.files.map(f => f.originalname) : 'No files');
+    console.log("  Files:", req.files ? req.files.map(f => f.originalname) : "No files");
 
     const { bidId, tenderId, vendorId, documentType } = req.body;
-    
-    // Validate required fields
+
+    // --- 1️⃣ Validate request ---
     if (!tenderId || !vendorId || !documentType) {
       return res.status(400).json({
         success: false,
-        message: "Tender ID, Vendor ID, and Document Type are required"
+        message: "Tender ID, Vendor ID, and Document Type are required",
       });
     }
 
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "No files were uploaded"
+        message: "No files were uploaded",
       });
     }
 
+    // --- 2️⃣ Validate vendor and tender ---
     const vendor = await Vendor.findById(vendorId);
     if (!vendor) {
       return res.status(404).json({
         success: false,
-        message: "Vendor not found"
+        message: "Vendor not found",
       });
     }
 
@@ -171,112 +172,101 @@ exports.uploadBidDocuments = async (req, res) => {
     if (!tender) {
       return res.status(404).json({
         success: false,
-        message: "Tender not found"
+        message: "Tender not found",
       });
     }
 
     if (tender.status !== "open") {
       return res.status(400).json({
         success: false,
-        message: "Tender is no longer accepting bids"
+        message: "Tender is no longer accepting bids",
       });
     }
 
+    // --- 3️⃣ Retrieve or create bid ---
     let bid;
-    
-    if (bidId && bidId !== 'new') {
+
+    if (bidId && bidId !== "new") {
       bid = await Bid.findById(bidId);
-      if (!bid) {
-        return res.status(404).json({
-          success: false,
-          message: "Bid not found"
-        });
-      }
     } else {
       bid = await Bid.findOne({ vendor: vendorId, tender: tenderId });
+
       if (!bid) {
         bid = new Bid({
           tender: tenderId,
           vendor: vendorId,
-          status: 'draft',
-          documents: []
+          status: "draft",
+          documents: [],
         });
+      } else if (!req.body.bidId || req.body.bidId === "new") {
+        // 🧹 Reset old bid documents if user starts a fresh upload
+        console.log("🧹 Resetting old bid documents for fresh upload");
+        bid.documents = [];
       }
     }
 
-    // Ensure documents is initialized as an array
-    if (!bid.documents) {
+    if (!bid) {
+      return res.status(404).json({
+        success: false,
+        message: "Bid not found",
+      });
+    }
+
+    if (!Array.isArray(bid.documents)) {
       bid.documents = [];
     }
 
-    // Debug: Check the current documents array
-    console.log("📋 Current documents:", bid.documents);
-    console.log("📋 First document type:", typeof bid.documents[0]);
+    console.log("📋 Existing documents before update:", bid.documents);
 
-    // Remove existing documents of the same type
-    bid.documents = bid.documents.filter(doc => {
-      // Handle both object and potential string formats
-      if (typeof doc === 'object' && doc !== null) {
-        return doc.type !== documentType;
-      }
-      return true; // Keep if we can't determine type
-    });
+    // --- 4️⃣ Remove only the document of the same type ---
+    bid.documents = bid.documents.filter(
+      (doc) => doc && doc.type !== documentType
+    );
 
-    // Add new documents as proper objects
-    req.files.forEach(file => {
-      const document = {
-        name: file.originalname,
-        type: documentType,
-        filePath: file.path,
-        uploadedAt: new Date(),
-        size: file.size
-      };
-      
-      console.log("📄 Adding document as object:", document);
-      bid.documents.push(document);
-    });
+    // --- 5️⃣ Add the newly uploaded document ---
+    const uploadedFile = req.files[0];
+    const newDoc = {
+      name: uploadedFile.originalname,
+      type: documentType,
+      // Normalize the file path (ensure it always starts with /uploads)
+      filePath: uploadedFile.path.startsWith("/uploads")
+        ? uploadedFile.path
+        : `/uploads/${uploadedFile.filename}`,
+      uploadedAt: new Date(),
+      size: uploadedFile.size,
+    };
 
-    // Mark the documents array as modified to ensure Mongoose saves it
-    bid.markModified('documents');
+    bid.documents.push(newDoc);
+    bid.markModified("documents");
 
-    console.log("💾 Saving bid with documents:", bid.documents);
+    // --- 6️⃣ Save and return updated bid ---
+    await bid.save();
 
-    try {
-      await bid.save();
-      console.log("✅ Bid saved successfully");
-    } catch (saveError) {
-      console.error("❌ Save error:", saveError);
-      throw saveError;
-    }
+    console.log(`✅ ${documentType} uploaded successfully for bid ${bid._id}`);
 
-    // Repopulate the bid to get fresh data
-    const populatedBid = await Bid.findById(bid._id)
-      .populate('vendor', 'businessName vendor')
-      .populate('tender', 'title budget deadline');
+    const updatedBid = await Bid.findById(bid._id)
+      .populate("vendor", "businessName vendor")
+      .populate("tender", "title budget deadline");
 
-    console.log("✅ Documents uploaded successfully for bid:", bid._id);
-
-    res.json({
+    res.status(200).json({
       success: true,
-      message: "Documents uploaded successfully",
-      data: populatedBid
+      message: `${documentType} uploaded successfully`,
+      data: updatedBid,
     });
-
   } catch (err) {
     console.error("❌ Error uploading bid documents:", err);
-    
-    // More detailed error logging
-    if (err.name === 'ValidationError') {
-      console.error("Validation errors:", err.errors);
-    }
-    
     res.status(500).json({
       success: false,
       message: "Failed to upload documents",
-      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+      error:
+        process.env.NODE_ENV === "development"
+          ? err.message
+          : "Internal server error",
     });
   }
 };
+
+
 
 exports.submitBid = async (req, res) => {
   try {
