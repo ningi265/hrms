@@ -43,6 +43,8 @@ app.options('*', cors({
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
 }));
 
+
+
 // CRITICAL: Stripe webhook route MUST come BEFORE any JSON parsing middleware
 const billingController = require('./api/controllers/billingController');
 app.post('/api/billing/webhook', express.raw({type: 'application/json'}), billingController.handleWebhook);
@@ -64,6 +66,8 @@ app.use(cors({
 
 app.use(bodyParser.json()); 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+app.use('/uploads/bid-documents', express.static(path.join(__dirname, 'uploads/bid-documents')));
 app.use(express.json()); // This now comes AFTER the webhook route
 
 // Make io available to routes

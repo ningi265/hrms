@@ -4,6 +4,27 @@ const Tenders = require('./tenders');
 const Vendor = require('./vendor');
 
 const bidSchema = new mongoose.Schema({
+   technicalScore: {
+    type: Number,
+    min: 0,
+    max: 100
+  },
+  financialScore: {
+    type: Number,
+    min: 0,
+    max: 100
+  },
+  totalScore: {
+    type: Number,
+    min: 0,
+    max: 100
+  },
+  evaluationComments: String,
+  recommendation: {
+    type: String,
+    enum: ['award', 'shortlist', 'reject', '']
+  },
+  awardedAt: Date,
   tender: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Tenders',

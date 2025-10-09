@@ -78,4 +78,27 @@ router.post('/submit', bidController.submitBid);
 // GET /api/bids/check-application/:vendorId/:tenderId - Check if vendor has applied
 router.get('/check-application/:vendorId/:tenderId', bidController.checkVendorApplication);
 
+
+
+// Company bidding portal routes
+router.get('/tender/:tenderId', bidController.getBidsByTender);
+router.get('/tender/:tenderId/count', bidController.getBidCountByTender);
+router.put('/:bidId/evaluate', bidController.evaluateBid);
+router.put('/:bidId/award', bidController.awardBid);
+router.get('/', bidController.getAllBids);
+
+
+
+
+// GET /api/bids/:bidId/documents/:documentId/download - Download bid document
+router.get('/:bidId/documents/:documentId/download', bidController.downloadDocument);
+
+// GET /api/bids/:bidId/documents/:documentId/view - View bid document in browser
+router.get('/:bidId/documents/:documentId/view', bidController.viewDocument);
+
+// GET /api/bids/:bidId/documents/:documentId - Get document info
+router.get('/:bidId/documents/:documentId', bidController.getDocumentInfo);
+
+router.get('/:bidId/documents/:documentId/view', bidController.viewDocument);
+
 module.exports = router;
