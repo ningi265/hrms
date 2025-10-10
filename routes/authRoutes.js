@@ -119,6 +119,7 @@ router.get('/verify-registration/:token',verifyRegistration);
 //Password Reset
 router.post("/reset",requestPasswordReset);
 router.post('/reset-password', resetPassword);
+router.put('/change-password', changePassword);
 
 
 // Profile Management Routes (all require authentication)

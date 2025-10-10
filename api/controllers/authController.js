@@ -2864,6 +2864,115 @@ exports.getUsersForManagement = async (req, res) => {
   }
 };
 
+// =======================
+// PASSWORD CHANGE ENDPOINT
+// =======================
+
+// Change user password (for authenticated users)
+exports.changePassword = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { currentPassword, newPassword } = req.body;
+        
+        console.log('Password change request for user:', userId);
+        
+        // Validate required fields
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({ 
+                success: false,
+                message: "Current password and new password are required" 
+            });
+        }
+        
+        // Find user with password field
+        const user = await User.findById(userId).select('+password');
+        
+        if (!user) {
+            return res.status(404).json({ 
+                success: false,
+                message: "User not found" 
+            });
+        }
+        
+        // Verify current password
+        console.log('Verifying current password...');
+        const isCurrentPasswordValid = await user.comparePassword(currentPassword);
+        
+        if (!isCurrentPasswordValid) {
+            console.log('Current password is incorrect');
+            return res.status(400).json({ 
+                success: false,
+                message: "Current password is incorrect" 
+            });
+        }
+        
+        // Validate new password strength
+        if (newPassword.length < 8) {
+            return res.status(400).json({ 
+                success: false,
+                message: "New password must be at least 8 characters long" 
+            });
+        }
+        
+        // Check if new password is different from current password
+        if (currentPassword === newPassword) {
+            return res.status(400).json({ 
+                success: false,
+                message: "New password must be different from current password" 
+            });
+        }
+        
+        // Additional password strength validation
+        const hasUppercase = /[A-Z]/.test(newPassword);
+        const hasLowercase = /[a-z]/.test(newPassword);
+        const hasNumbers = /\d/.test(newPassword);
+        const hasSpecialChar = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\?]/.test(newPassword);
+
+        if (!hasUppercase || !hasLowercase || !hasNumbers || !hasSpecialChar) {
+            return res.status(400).json({ 
+                success: false,
+                message: "New password must contain at least one uppercase letter, one lowercase letter, one number, and one special character" 
+            });
+        }
+        
+        console.log('Updating password...');
+        
+        // Update password
+        user.password = newPassword;
+        user.updatedAt = Date.now();
+        
+        await user.save();
+        
+        console.log('Password updated successfully for user:', userId);
+        
+        // Send notification email
+        try {
+            await sendEmailNotification(
+                user.email,
+                "Password Changed Successfully",
+                `Hello ${user.firstName || 'there'},\n\nYour password has been successfully updated. If you did not make this change, please contact support immediately.\n\nBest regards,\nThe ${process.env.EMAIL_FROM_NAME || 'NexusMWI'} Team`
+            );
+            console.log('Password change notification email sent');
+        } catch (emailError) {
+            console.error("Password change notification email failed:", emailError);
+            // Continue even if email fails
+        }
+        
+        res.status(200).json({
+            success: true,
+            message: "Password changed successfully"
+        });
+        
+    } catch (err) {
+        console.error("Error in changePassword:", err);
+        res.status(500).json({ 
+            success: false,
+            message: "Failed to change password", 
+            error: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
+    }
+};
+
 // Helper function to map roles to permissions
 function getPermissionsForRole(role) {
   const rolePermissions = {
