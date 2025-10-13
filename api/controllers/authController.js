@@ -294,6 +294,7 @@ exports.updateSecuritySettings = async (req, res) => {
 
 // Change password
 exports.changePassword = async (req, res) => {
+  console.log(req.body);
     try {
         const userId = req.user._id;
         const { currentPassword, newPassword } = req.body;

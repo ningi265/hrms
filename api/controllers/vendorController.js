@@ -320,6 +320,8 @@ exports.approveVendor = async (req, res) => {
         const { vendorId } = req.params;
         const reviewerId = req.user._id; // Assuming admin user is authenticated
 
+        console.log('🔍 Backend - Approving vendor:', vendorId);
+
         const vendor = await Vendor.findById(vendorId);
         if (!vendor) {
             return res.status(404).json({ message: "Vendor not found" });
@@ -329,7 +331,20 @@ exports.approveVendor = async (req, res) => {
             return res.status(400).json({ message: "Vendor registration is not pending" });
         }
 
+        // Update vendor status
         await vendor.approve(reviewerId);
+
+        // Also update the associated User object
+        const user = await User.findById(vendor.vendor);
+        if (user) {
+            user.registrationStatus = "approved";
+            user.approvalDate = new Date();
+            user.approvedBy = reviewerId;
+            await user.save();
+            console.log('✅ User registration status updated to approved');
+        } else {
+            console.log('⚠️ No associated user found for vendor');
+        }
 
         // Here you could send approval email to vendor
         
@@ -340,7 +355,8 @@ exports.approveVendor = async (req, res) => {
                 businessName: vendor.businessName,
                 status: vendor.registrationStatus,
                 approvalDate: vendor.approvalDate
-            }
+            },
+            userUpdated: !!user
         });
 
     } catch (err) {
@@ -354,8 +370,10 @@ exports.rejectVendor = async (req, res) => {
     try {
         const { vendorId } = req.params;
         const reviewerId = req.user._id;
+        const { rejectionReason } = req.body;
 
-       
+        console.log('🔍 Backend - Rejecting vendor:', vendorId);
+
         const vendor = await Vendor.findById(vendorId);
         if (!vendor) {
             return res.status(404).json({ message: "Vendor not found" });
@@ -365,17 +383,33 @@ exports.rejectVendor = async (req, res) => {
             return res.status(400).json({ message: "Vendor registration is not pending" });
         }
 
-        await vendor.reject( reviewerId);
+        // Update vendor status
+        await vendor.reject(reviewerId, rejectionReason);
+
+        // Also update the associated User object
+        const user = await User.findById(vendor.vendor);
+        if (user) {
+            user.registrationStatus = "rejected";
+            user.rejectionDate = new Date();
+            user.rejectedBy = reviewerId;
+            user.rejectionReason = rejectionReason;
+            await user.save();
+            console.log('✅ User registration status updated to rejected');
+        } else {
+            console.log('⚠️ No associated user found for vendor');
+        }
 
         // Here you could send rejection email to vendor
         
         res.json({ 
-            message: "Vendor registration rejected", 
+            message: "Vendor rejected successfully", 
             vendor: {
                 id: vendor._id,
                 businessName: vendor.businessName,
                 status: vendor.registrationStatus,
-            }
+                rejectionDate: vendor.rejectionDate
+            },
+            userUpdated: !!user
         });
 
     } catch (err) {
@@ -1151,75 +1185,217 @@ const sendRegistrationRejectionEmail = async (vendorData) => {
 };
 
 
-
-// Updated registerVendor function
 exports.registerVendor = async (req, res) => {
   try {
-    console.log("Incoming Vendor Registration Request:", req.body);
-    // Parse JSON fields (frontend will send FormData)
+    console.log("Incoming Vendor Registration Request - Body:", req.body);
+    console.log("Incoming Vendor Registration Request - Files:", req.files);
+    
+    // Parse JSON fields from FormData
     const body = JSON.parse(req.body.data);
 
     // Extract uploaded files
-    const files = req.files;
-    const docMapper = (field) =>
-      files[field]?.map((f) => ({
-        fileName: f.originalname,
-        filePath: f.path,
-        size: f.size,
-        uploadedAt: new Date(),
-      })) || [];
+    const files = req.files || {};
+    console.log("Available files by field:", Object.keys(files));
 
-    // Create vendor
-    const vendor = await Vendor.create({
+    // Improved document mapper that properly saves all file information
+    const docMapper = (field) => {
+      if (!files[field]) {
+        console.log(`No files found for field: ${field}`);
+        return null;
+      }
+
+      const fileArray = Array.isArray(files[field]) ? files[field] : [files[field]];
+      console.log(`Processing ${fileArray.length} file(s) for field: ${field}`);
+
+      const processedFiles = fileArray.map((file, index) => {
+        const fileInfo = {
+          fileName: file.originalname,
+          filePath: file.path,
+          size: file.size,
+          uploadedAt: new Date(),
+          mimeType: file.mimetype,
+          fieldName: field,
+          originalName: file.originalname
+        };
+        console.log(`File ${index + 1} for ${field}:`, fileInfo);
+        return fileInfo;
+      });
+
+      return processedFiles;
+    };
+
+    // Get user name properly and ensure it's not empty
+    const userName = `${req.user.firstName || 'Vendor'} ${req.user.lastName || 'User'}`.trim();
+    console.log("User name for vendor:", userName);
+
+    // Create comprehensive vendor data with properly structured documents
+    const vendorData = {
+      // Basic company information
       ...body,
+      
+      // User and vendor references
       vendor: req.user._id,
       user: req.user._id,
-      name: req.user.firstName + " " + req.user.lastName,
+      name: userName || body.businessName || 'Vendor',
+      
+      // Registration metadata
       registrationStatus: "pending",
       submissionDate: new Date(),
+      
+      // Contact information from user
+      phoneNumber: body.phoneNumber,
+      contactEmail: body.contactEmail,
+      address: body.address,
+      
+      // Documents structure - properly saving all file information
       documents: {
-        registrationCertificate: docMapper("registrationCertificate")[0] || null,
-        businessLicense: docMapper("businessLicense")[0] || null,
-        taxClearance: docMapper("taxClearance")[0] || null,
-        vatRegistration: docMapper("vatRegistration")[0] || null,
-        industryLicenses: docMapper("industryLicenses"),
-        auditedStatements: docMapper("auditedStatements"),
-        relevantExperience: docMapper("relevantExperience"),
-        keyPersonnel: docMapper("keyPersonnel"),
-        equipmentFacilities: docMapper("equipmentFacilities"),
-        qualityCertifications: docMapper("qualityCertifications"),
-        clientReferences: docMapper("clientReferences"),
-        completedProjects: docMapper("completedProjects"),
-        safetyRecords: docMapper("safetyRecords"),
-        sustainabilityPractices: docMapper("sustainabilityPractices"),
-        csrInitiatives: docMapper("csrInitiatives"),
-        environmentCertificate: docMapper("environmentCertificate")[0] || null,
-      },
+        // Single file documents (store as single object)
+        registrationCertificate: docMapper("registrationCertificate")?.[0] || null,
+        businessLicense: docMapper("businessLicense")?.[0] || null,
+        taxClearance: docMapper("taxClearance")?.[0] || null,
+        vatRegistration: docMapper("vatRegistration")?.[0] || null,
+        environmentCertificate: docMapper("environmentCertificate")?.[0] || null,
+        
+        // Multiple file documents (store as arrays)
+        industryLicenses: docMapper("industryLicenses") || [],
+        auditedStatements: docMapper("auditedStatements") || [],
+        relevantExperience: docMapper("relevantExperience") || [],
+        keyPersonnel: docMapper("keyPersonnel") || [],
+        equipmentFacilities: docMapper("equipmentFacilities") || [],
+        qualityCertifications: docMapper("qualityCertifications") || [],
+        clientReferences: docMapper("clientReferences") || [],
+        completedProjects: docMapper("completedProjects") || [],
+        safetyRecords: docMapper("safetyRecords") || [],
+        sustainabilityPractices: docMapper("sustainabilityPractices") || [],
+        csrInitiatives: docMapper("csrInitiatives") || []
+      }
+    };
+
+    // Log the complete vendor data structure for debugging
+    console.log("Complete vendor data to save:", {
+      name: vendorData.name,
+      businessName: vendorData.businessName,
+      registrationStatus: vendorData.registrationStatus,
+      documentsSummary: Object.keys(vendorData.documents).reduce((acc, key) => {
+        const doc = vendorData.documents[key];
+        if (Array.isArray(doc)) {
+          acc[key] = `${doc.length} file(s)`;
+        } else {
+          acc[key] = doc ? "1 file" : "No file";
+        }
+        return acc;
+      }, {})
     });
 
-    // Run Pre-qualification scoring
-    const preQualData = { ...body, companyInfo: body, legalCompliance: body, financialCapability: body, technicalCapacity: body, pastPerformance: body, hse: body, ethicsGovernance: body };
-    const { score, status, reasons } = calculatePreQualScore(preQualData);
+    // Create vendor in database
+    const vendor = await Vendor.create(vendorData);
+    console.log("Vendor created successfully with ID:", vendor._id);
 
-    await VendorPreQualification.create({
+    // FIXED: Prepare proper data for pre-qualification scoring with ALL required fields including documents
+    const preQualData = {
       vendorId: vendor._id,
-      ...preQualData,
-      score,
-      status,
-      reasons,
+      companyInfo: {
+        businessName: body.businessName,
+        taxpayerIdentificationNumber: body.taxpayerIdentificationNumber,
+        registrationNumber: body.registrationNumber,
+        registrationIssuedDate: body.registrationIssuedDate,
+        phoneNumber: body.phoneNumber,
+        address: body.address,
+        contactEmail: body.contactEmail,
+        yearsInOperation: body.yearsInOperation,
+        countryOfRegistration: body.countryOfRegistration || "Malawi"
+      },
+      legalCompliance: {
+        laborLawCompliance: body.laborLawCompliance,
+        litigationHistory: body.litigationHistory
+      },
+      financialCapability: {
+        bankReference: body.bankReference,
+        annualTurnover: body.annualTurnover,
+        insuranceCoverage: body.insuranceCoverage
+      },
+      technicalCapacity: {
+        deliveryCapacity: body.deliveryCapacity
+      },
+      pastPerformance: {
+        timelyDeliveryRecord: body.timelyDeliveryRecord,
+        performanceRatings: body.performanceRatings
+      },
+      hse: {
+        safetyPolicy: body.safetyPolicy
+      },
+      ethicsGovernance: {
+        antiCorruptionPolicy: body.antiCorruptionPolicy,
+        conflictOfInterest: body.conflictOfInterest,
+        codeOfConductSigned: body.codeOfConductSigned
+      },
+      // ✅ CRITICAL: Add documents for scoring in flat structure
+      documents: vendorData.documents,
+      assessmentDate: new Date()
+    };
+
+    // Debug what we're passing to the scoring function
+    console.log("DEBUG - Data passed to calculatePreQualScore:", {
+      hasDocuments: !!preQualData.documents,
+      documentKeys: preQualData.documents ? Object.keys(preQualData.documents) : 'No documents',
+      registrationCertificateExists: !!preQualData.documents?.registrationCertificate,
+      businessLicenseExists: !!preQualData.documents?.businessLicense,
+      taxClearanceExists: !!preQualData.documents?.taxClearance
     });
 
+    // Run pre-qualification scoring
+    const { score, status, reasons } = calculatePreQualScore(preQualData);
+    console.log("Pre-qualification results:", { score, status, reasons });
+
+    // Add scoring results to preQualData
+    preQualData.score = score;
+    preQualData.status = status;
+    preQualData.reasons = reasons;
+
+    // Create pre-qualification record
+    await VendorPreQualification.create(preQualData);
+    console.log("Pre-qualification record created successfully");
+
+    // Send success response
     res.status(201).json({
       success: true,
-      message: "Vendor registration submitted.",
-      vendor,
-      preQualification: { score, status, reasons },
+      message: "Vendor registration submitted successfully.",
+      vendor: {
+        id: vendor._id,
+        businessName: vendor.businessName,
+        registrationStatus: vendor.registrationStatus
+      },
+      preQualification: { 
+        score, 
+        status, 
+        reasons 
+      },
+      documents: {
+        total: Object.values(vendorData.documents).reduce((count, doc) => {
+          if (Array.isArray(doc)) return count + doc.length;
+          return count + (doc ? 1 : 0);
+        }, 0),
+        summary: Object.keys(vendorData.documents).reduce((acc, key) => {
+          const doc = vendorData.documents[key];
+          acc[key] = Array.isArray(doc) ? doc.length : (doc ? 1 : 0);
+          return acc;
+        }, {})
+      }
     });
+
   } catch (err) {
     console.error("Error registering vendor:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
+    
+    // More detailed error response
+    res.status(500).json({ 
+      success: false,
+      message: "Server error during vendor registration",
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 };
+
 
 exports.getPendingRegistrations = async (req, res) => {
     try {
@@ -1234,26 +1410,73 @@ exports.getPendingRegistrations = async (req, res) => {
     }
 }
 
-
 exports.getVendorRegistrationData = async (req, res) => {
-    const vendorId =  req.user._id;  
+    const vendorId = req.user._id;  
 
     try {
-        const registrationData = await Vendor.findOne({ vendor: vendorId })
-            .populate('vendor', 'firstName lastName phoneNumber email')
-            ;
+        console.log("Fetching vendor data for user:", vendorId);
 
-        if (!registrationData) {
-            return res.status(404).json({ message: "Registration data not found for this vendor." });
+        const vendorRegistration = await Vendor.findOne({ vendor: vendorId })
+            .populate('vendor', 'firstName lastName phoneNumber email')
+            .lean();
+
+        console.log("Found vendor registration data:", {
+            id: vendorRegistration?._id,
+            businessName: vendorRegistration?.businessName,
+            registrationStatus: vendorRegistration?.registrationStatus,
+            hasDocuments: !!vendorRegistration?.documents
+        });
+
+        if (!vendorRegistration) {
+            console.log("No vendor registration found for user:", vendorId);
+            return res.status(404).json({ 
+                success: false,
+                message: "Registration data not found for this vendor." 
+            });
         }
 
-        res.json(registrationData);
+        // Log detailed document information for debugging
+        if (vendorRegistration.documents) {
+            console.log("Documents structure:", Object.keys(vendorRegistration.documents));
+            
+            Object.entries(vendorRegistration.documents).forEach(([key, value]) => {
+                if (Array.isArray(value)) {
+                    console.log(`Document field ${key}: ${value.length} file(s)`);
+                    value.forEach((doc, index) => {
+                        console.log(`  - File ${index + 1}:`, {
+                            fileName: doc.fileName,
+                            size: doc.size,
+                            uploadedAt: doc.uploadedAt
+                        });
+                    });
+                } else if (value && typeof value === 'object') {
+                    console.log(`Document field ${key}:`, {
+                        fileName: value.fileName,
+                        size: value.size,
+                        uploadedAt: value.uploadedAt
+                    });
+                } else {
+                    console.log(`Document field ${key}:`, value);
+                }
+            });
+        } else {
+            console.log("No documents found in vendor registration");
+        }
+
+        res.json({
+            success: true,
+            ...vendorRegistration
+        });
+
     } catch (err) {
         console.error("Error fetching vendor registration data:", err);
-        res.status(500).json({ message: "Server error", error: err.message });
+        res.status(500).json({ 
+            success: false,
+            message: "Server error while fetching vendor data", 
+            error: err.message 
+        });
     }
 };
-
 
 // Approve vendor registration (admin only)
 exports.approveVendor = async (req, res) => {

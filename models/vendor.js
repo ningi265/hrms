@@ -149,15 +149,28 @@ const VendorSchema = new mongoose.Schema({
     },
 
     // Documents and Files
-    documents: [{
-        name: String,
-        url: String,
-        fileType: String,
-        uploadedAt: {
-            type: Date,
-            default: Date.now
-        }
-    }],
+   documents: {
+  type: Object,
+  default: {
+    registrationCertificate: null,
+    businessLicense: null,
+    taxClearance: null,
+    vatRegistration: null,
+    environmentCertificate: null,
+    industryLicenses: [],
+    auditedStatements: [],
+    relevantExperience: [],
+    keyPersonnel: [],
+    equipmentFacilities: [],
+    qualityCertifications: [],
+    clientReferences: [],
+    completedProjects: [],
+    safetyRecords: [],
+    sustainabilityPractices: [],
+    csrInitiatives: []
+  }
+},
+
 
     // Financial Information
     paymentTerms: {
