@@ -2973,6 +2973,319 @@ exports.changePassword = async (req, res) => {
     }
 };
 
+
+// Get AI chat suggestions for user
+exports.getAIChatSuggestions = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        
+        // Get user context for personalized suggestions
+        const user = await User.findById(userId)
+            .populate('company', 'name industry')
+            .select('firstName lastName role department company');
+        
+        if (!user) {
+            return res.status(404).json({ 
+                success: false,
+                message: "User not found" 
+            });
+        }
+
+        // Get procurement stats for context-aware suggestions
+        const Requisition = require('../../models/requisition');
+        const RFQ = require('../../models/rfq');
+        
+        const [pendingRequisitions, pendingApprovals, activeRFQs] = await Promise.all([
+            Requisition.countDocuments({ 
+                createdBy: userId, 
+                status: 'pending_approval' 
+            }),
+            Requisition.countDocuments({ 
+                'approvals.approverId': userId,
+                'approvals.status': 'pending'
+            }),
+            RFQ.countDocuments({ 
+                createdBy: userId,
+                status: { $in: ['open', 'in_progress'] }
+            })
+        ]);
+
+        // Role-based default suggestions
+        let suggestions = [
+            "Create new requisition",
+            "Check pending approvals", 
+            "Generate procurement report",
+            "Vendor performance analysis"
+        ];
+
+        // Add context-aware suggestions
+        if (pendingRequisitions > 0) {
+            suggestions.push(`Follow up on ${pendingRequisitions} pending requisitions`);
+        }
+        
+        if (pendingApprovals > 0) {
+            suggestions.push(`Review ${pendingApprovals} pending approvals`);
+        }
+        
+        if (activeRFQs > 0) {
+            suggestions.push(`Track ${activeRFQs} active RFQs`);
+        }
+
+        // Role-specific suggestions
+        if (user.role === 'procurement_manager' || user.role === 'Management') {
+            suggestions.push(
+                "Analyze vendor performance",
+                "Generate spend analysis report",
+                "Budget allocation review"
+            );
+        } else if (user.role === 'vendor') {
+            suggestions.push(
+                "Browse open RFQs",
+                "Update vendor profile", 
+                "Submit bid proposal"
+            );
+        } else if (user.role.includes('Finance') || user.role === 'Accounting/Finance') {
+            suggestions.push(
+                "Review budget utilization",
+                "Generate financial report",
+                "Approve pending invoices"
+            );
+        }
+
+        res.status(200).json({
+            success: true,
+            suggestions: suggestions.slice(0, 8), // Limit to 8 suggestions
+            context: {
+                role: user.role,
+                department: user.department,
+                pendingRequisitions,
+                pendingApprovals,
+                activeRFQs
+            }
+        });
+
+    } catch (err) {
+        console.error("Error in getAIChatSuggestions:", err);
+        res.status(500).json({ 
+            success: false,
+            message: "Failed to fetch AI suggestions", 
+            error: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
+    }
+};
+
+
+
+// Get AI chat conversation history
+exports.getAIConversationHistory = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { limit = 50 } = req.query;
+
+        // Check if AI chat models exist, if not return empty
+        let Conversation;
+        try {
+            Conversation = require('../../models/aiChatModel').Conversation;
+        } catch (error) {
+            return res.status(200).json({
+                success: true,
+                messages: [],
+                hasAIChat: false
+            });
+        }
+
+        const conversation = await Conversation.findOne({ userId })
+            .populate('messages')
+            .sort({ 'messages.createdAt': -1 })
+            .limit(parseInt(limit));
+
+        if (!conversation) {
+            return res.status(200).json({
+                success: true,
+                messages: [],
+                hasAIChat: true
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            messages: conversation.messages,
+            lastActive: conversation.lastActive,
+            hasAIChat: true
+        });
+
+    } catch (err) {
+        console.error("Error in getAIConversationHistory:", err);
+        res.status(500).json({ 
+            success: false,
+            message: "Failed to fetch conversation history", 
+            error: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
+    }
+};
+
+// Process AI chat message
+exports.processAIChatMessage = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { message } = req.body;
+        
+        if (!message) {
+            return res.status(400).json({ 
+                success: false,
+                message: "Message is required" 
+            });
+        }
+
+        // Get user context for AI response
+        const user = await User.findById(userId)
+            .populate('company', 'name industry')
+            .select('firstName lastName role department company');
+        
+        if (!user) {
+            return res.status(404).json({ 
+                success: false,
+                message: "User not found" 
+            });
+        }
+
+        // Try to use DeepSeek AI service if available
+        let aiResponse;
+        try {
+            const { deepseekService } = require('../../services/deepseekService');
+            const { contextBuilderService } = require('../../services/contextBuilderService');
+            
+            // Build context and get AI response
+            const context = await contextBuilderService.buildUserContext(userId, message);
+            const aiResult = await deepseekService.generateResponse(
+                [{ sender: 'user', text: message }],
+                context
+            );
+            
+            if (aiResult.success) {
+                aiResponse = aiResult.message;
+                
+                // Save to conversation history if models exist
+                try {
+                    const { Conversation, Message } = require('../../models/aiChatModel');
+                    
+                    let conversation = await Conversation.findOne({ userId });
+                    if (!conversation) {
+                        conversation = new Conversation({ userId, messages: [] });
+                    }
+                    
+                    // Add user message
+                    const userMsg = new Message({
+                        userId,
+                        text: message,
+                        sender: 'user'
+                    });
+                    
+                    // Add AI response
+                    const aiMsg = new Message({
+                        userId,
+                        text: aiResponse,
+                        sender: 'ai',
+                        context: context.procurementData
+                    });
+                    
+                    conversation.messages.push(userMsg, aiMsg);
+                    conversation.lastActive = new Date();
+                    await conversation.save();
+                    
+                } catch (dbError) {
+                    console.error('Failed to save AI conversation:', dbError);
+                    // Continue even if saving fails
+                }
+            } else {
+                throw new Error(aiResult.error);
+            }
+            
+        } catch (aiError) {
+            console.error('AI service error, using fallback:', aiError);
+            // Fallback responses when AI service is unavailable
+            aiResponse = getFallbackAIResponse(message, user);
+        }
+
+        res.status(200).json({
+            success: true,
+            response: aiResponse,
+            user: {
+                id: user._id,
+                name: `${user.firstName} ${user.lastName}`,
+                role: user.role
+            },
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (err) {
+        console.error("Error in processAIChatMessage:", err);
+        res.status(500).json({ 
+            success: false,
+            message: "Failed to process AI message", 
+            error: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
+    }
+};
+
+// Helper function for fallback AI responses
+function getFallbackAIResponse(message, user) {
+    const lowerMessage = message.toLowerCase();
+    
+    const responses = {
+        'requisition': `I can help you with requisitions. Based on your role as ${user.role}, you can create new requisitions in the Requisitions section. Would you like step-by-step guidance?`,
+        'approval': `Check your approval queue in the Approvals dashboard. As ${user.role}, you might have pending items requiring your attention.`,
+        'vendor': `Vendor management is available in the Vendors section. You can view vendor performance, add new vendors, or manage existing relationships.`,
+        'rfq': `RFQ (Request for Quotation) management is in the Bidding section. You can create new RFQs, track responses, and manage the bidding process.`,
+        'report': `Reports are generated in the Analytics section. Available reports include spend analysis, vendor performance, and budget utilization.`,
+        'budget': `Budget information is available in the Budget Management section. You can view allocated budgets, track spending, and generate budget reports.`,
+        'purchase order': `Purchase orders can be created and managed in the Purchase Orders section. You can convert approved requisitions into POs.`,
+        'invoice': `Invoice management is in the Invoices section. You can submit new invoices, track payments, and manage billing.`
+    };
+
+    for (const [key, response] of Object.entries(responses)) {
+        if (lowerMessage.includes(key)) {
+            return response;
+        }
+    }
+
+    return `Hello ${user.firstName}! As your AI assistant, I can help you with procurement tasks including requisitions, approvals, vendors, RFQs, reports, and more. What specific area do you need help with?`;
+}
+
+// Clear AI conversation history
+exports.clearAIConversation = async (req, res) => {
+    try {
+        const userId = req.user._id;
+
+        // Check if AI chat models exist
+        let Conversation;
+        try {
+            Conversation = require('../../models/aiChatModel').Conversation;
+        } catch (error) {
+            return res.status(200).json({
+                success: true,
+                message: "AI chat not configured"
+            });
+        }
+
+        await Conversation.findOneAndDelete({ userId });
+
+        res.status(200).json({
+            success: true,
+            message: "AI conversation history cleared successfully"
+        });
+
+    } catch (err) {
+        console.error("Error in clearAIConversation:", err);
+        res.status(500).json({ 
+            success: false,
+            message: "Failed to clear conversation history", 
+            error: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
+    }
+};
+
+
 // Helper function to map roles to permissions
 function getPermissionsForRole(role) {
   const rolePermissions = {
