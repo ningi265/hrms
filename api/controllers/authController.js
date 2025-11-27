@@ -12,6 +12,17 @@ const crypto = require('crypto');
 const postmark = require('postmark');     
 //const {sendEmailNotification} = require("../services/notificationService");
 
+
+function generatedSecurePassword() {
+  const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?";
+  let password = "";
+  for (let i = 0; i < 16; i++) { // 16 characters for better security
+    const randomIndex = Math.floor(Math.random() * charset.length);
+    password += charset[randomIndex];
+  }
+  return password;
+}
+
 // Twilio setup
 const twilioClient = twilio(
     process.env.TWILIO_ACCOUNT_SID,
@@ -1097,24 +1108,29 @@ exports.register = async (req, res) => {
       industry,
       domain,
       phoneNumber,
-      role
+      role,
+      isGoogleSignup = false
     } = req.body;
 
     // Validate required fields
-    if (!firstName || !lastName || !email || !password || !companyName || !industry || !phoneNumber || !role) {
+    if (!firstName || !lastName || !email || !companyName || !industry || !phoneNumber || !role) {
       return res.status(400).json({
         message: "All fields are required",
         requiredFields: [
           'firstName',
           'lastName',
           'email',
-          'password',
           'companyName',
           'industry',
           'phoneNumber',
           'role'
         ]
       });
+    }
+
+    // For non-Google signups, password is required
+    if (!isGoogleSignup && !password) {
+      return res.status(400).json({ message: "Password is required" });
     }
 
     // Validate email format
@@ -1153,25 +1169,37 @@ exports.register = async (req, res) => {
     // Calculate trial dates
     const now = new Date();
     const trialEnd = new Date(now);
-    trialEnd.setDate(now.getDate() + 14); // 14-day trial
+    trialEnd.setDate(now.getDate() + 7);
 
-    // Create new user with enterprise admin privileges if first user for company
+    let userPassword = password;
+    let generatedPassword = null;
+
+    if (isGoogleSignup) {
+      // Generate a random password for Google signups
+      generatedPassword = generateSecurePassword();
+      userPassword = generatedPassword;
+    }
+
+    // Create new user - DIFFERENT VERIFICATION STATUS BASED ON SIGNUP TYPE
     const isFirstUser = company.usersCount === 0;
     const newUser = await User.create({
       firstName,
       lastName,
       email,
-      password,
+      password: userPassword,
       phoneNumber,
       company: company._id,
       companyName,
       industry,
       role,
       isEnterpriseAdmin: isFirstUser,
-      isVerified: false,
-      isEmailVerified: false,
+      // ✅ Google users are auto-verified, normal users need email verification
+      isVerified: isGoogleSignup, // Google users are verified immediately
+      isEmailVerified: isGoogleSignup, // Google users have verified email
       verificationCode: null,
-      emailVerificationCode: null,
+      // Normal users need email verification code
+      emailVerificationCode: isGoogleSignup ? null : generateVerificationCode(),
+      emailVerificationExpires: isGoogleSignup ? null : Date.now() + 3600000, // 1 hour
       billing: {
         subscription: {
           plan: 'trial',
@@ -1190,23 +1218,83 @@ exports.register = async (req, res) => {
     // Generate token
     const token = generateToken(newUser);
 
-   
+    // Handle different flows based on signup type
+    if (isGoogleSignup) {
+      // Google signup: Send password email and auto-login
+      if (generatedPassword) {
+        try {
+          await sendGoogleSignupPasswordEmail(email, firstName, generatedPassword);
+          console.log("✅ Google signup password email sent successfully");
+        } catch (emailError) {
+          console.error("❌ Google signup email failed:", emailError);
+          // Don't fail registration if email fails
+        }
+      }
 
-    // Respond with user data
-    res.status(201).json({
-      message: "Registration successful. Verification codes sent.",
-      user: {
-        id: newUser._id,
-        firstName,
-        lastName,
-        email,
-        company: company.name,
-        role: newUser.role,
-        isEnterpriseAdmin: newUser.isEnterpriseAdmin
-      },
-      token,
-      nextStep: "verify_email"
-    });
+      // Respond for Google signup - immediate access
+      return res.status(201).json({
+        message: "Registration successful. Your password has been sent to your email.",
+        user: {
+          id: newUser._id,
+          firstName,
+          lastName,
+          email,
+          company: company.name,
+          role: newUser.role,
+          isEnterpriseAdmin: newUser.isEnterpriseAdmin,
+          isVerified: true,
+          isEmailVerified: true
+        },
+        token,
+        nextStep: "complete_onboarding"
+      });
+
+    } else {
+      // Normal signup: Send email verification
+      try {
+        await sendVerificationEmail(newUser, newUser.emailVerificationCode);
+        console.log("✅ Normal signup verification email sent");
+
+        // Respond for normal signup - needs verification
+        return res.status(201).json({
+          message: "Registration successful. Verification code sent to your email.",
+          user: {
+            id: newUser._id,
+            firstName,
+            lastName,
+            email,
+            company: company.name,
+            role: newUser.role,
+            isEnterpriseAdmin: newUser.isEnterpriseAdmin,
+            isVerified: false,
+            isEmailVerified: false
+          },
+          token,
+          nextStep: "verify_email"
+        });
+
+      } catch (emailError) {
+        console.error("❌ Normal signup verification email failed:", emailError);
+        
+        // Even if email fails, user is created but needs manual verification
+        return res.status(201).json({
+          message: "Registration successful but verification email failed. Please contact support.",
+          user: {
+            id: newUser._id,
+            firstName,
+            lastName,
+            email,
+            company: company.name,
+            role: newUser.role,
+            isEnterpriseAdmin: newUser.isEnterpriseAdmin,
+            isVerified: false,
+            isEmailVerified: false
+          },
+          token,
+          nextStep: "verify_email"
+        });
+      }
+    }
 
   } catch (err) {
     console.error("Error during registration:", err);
@@ -1227,7 +1315,98 @@ exports.register = async (req, res) => {
   }
 };
 
+async function sendGoogleSignupPasswordEmail(email, firstName, password) {
+  console.log('📧 Starting email send process...');
+  
+  // Check if required environment variables are set
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    console.error('❌ Email credentials not configured');
+    throw new Error('Email service not configured');
+  }
 
+  const mailOptions = {
+    from: process.env.EMAIL_FROM || 'noreply@yourdomain.com',
+    to: email,
+    subject: 'Your Account Password - Google Signup',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+          .password-box { background: #fff; border: 2px dashed #667eea; padding: 15px; margin: 20px 0; text-align: center; font-family: monospace; font-size: 18px; font-weight: bold; }
+          .warning { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 20px 0; }
+          .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Welcome to Our Platform!</h1>
+          </div>
+          <div class="content">
+            <h2>Hello ${firstName},</h2>
+            <p>Thank you for signing up using Google authentication. Your account has been successfully created!</p>
+            
+            <p>We've generated a secure password for your account that you can use to log in with your email and password in the future:</p>
+            
+            <div class="password-box">
+              ${password}
+            </div>
+            
+            <div class="warning">
+              <strong>Important:</strong> Please save this password securely. You can change it later in your account settings.
+            </div>
+            
+            <p>You can use this password to:</p>
+            <ul>
+              <li>Log in with email and password</li>
+              <li>Access your account if Google sign-in is unavailable</li>
+              <li>Change to a password you prefer in account settings</li>
+            </ul>
+            
+            <p>To get started, you can:</p>
+            <ol>
+              <li>Continue using Google Sign-in for quick access</li>
+              <li>Use your email and the password above</li>
+              <li>Change your password in Account Settings for better security</li>
+            </ol>
+            
+            <p>If you have any questions, please contact our support team.</p>
+            
+            <p>Best regards,<br>The Team</p>
+          </div>
+          <div class="footer">
+            <p>This is an automated message. Please do not reply to this email.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `
+  };
+
+  try {
+    console.log('📧 Creating email transporter...');
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+
+    console.log('📧 Sending email...');
+    const result = await transporter.sendMail(mailOptions);
+    console.log('✅ Email sent successfully:', result.messageId);
+    return result;
+  } catch (error) {
+    console.error('❌ Email sending failed:', error);
+    throw error;
+  }
+}
 
 exports.googleLogin = async (req, res) => {
   try {

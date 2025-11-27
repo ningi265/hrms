@@ -318,7 +318,7 @@ exports.getPendingRegistrations = async (req, res) => {
 exports.approveVendor = async (req, res) => {
     try {
         const { vendorId } = req.params;
-        const reviewerId = req.user._id; // Assuming admin user is authenticated
+        const reviewerId = req.user._id; 
 
         console.log('🔍 Backend - Approving vendor:', vendorId);
 
@@ -416,8 +416,7 @@ exports.rejectVendor = async (req, res) => {
         console.error("Error rejecting vendor:", err);
         res.status(500).json({ message: "Server error", error: err.message });
     }
-};
-
+}; 
 // Get vendor details by ID
 exports.getVendorDetails = async (req, res) => {
     try {
