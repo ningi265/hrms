@@ -140,23 +140,68 @@ Please provide a helpful, professional response based on the user's context, con
 
         let formattedData = '';
         
+        const summary = procurementData.summary || {};
+
+        // Requisition summary by status
         if (procurementData.requisitionStats && procurementData.requisitionStats.length > 0) {
-            formattedData += `REQUISITIONS:\n`;
-            procurementData.requisitionStats.forEach(req => {
-                formattedData += `- ${req.title || 'Requisition'} (${req.status || 'Unknown'}): ${req.description || 'No description'}\n`;
+            formattedData += `REQUISITION SUMMARY (by status):\n`;
+            procurementData.requisitionStats.forEach(stat => {
+                const status = stat._id || 'unknown';
+                const count = stat.count || 0;
+                const total = typeof stat.totalAmount === 'number' ? stat.totalAmount.toFixed(2) : '0.00';
+                formattedData += `- ${status}: ${count} requisition(s), total estimated cost ${total}\n`;
+            });
+
+            if (typeof summary.totalRequisitions === 'number' && summary.totalRequisitions > 0) {
+                formattedData += `Total requisitions: ${summary.totalRequisitions}\n`;
+            }
+        }
+
+        // Recent requisitions created by the current user
+        if (procurementData.myRequisitions && procurementData.myRequisitions.length > 0) {
+            formattedData += `\nRECENT REQUISITIONS (created by this user):\n`;
+            procurementData.myRequisitions.forEach(req => {
+                const employeeName = req.employee
+                    ? `${req.employee.firstName || ''} ${req.employee.lastName || ''}`.trim()
+                    : 'Unknown employee';
+                const cost = typeof req.estimatedCost === 'number'
+                    ? req.estimatedCost.toFixed(2)
+                    : 'N/A';
+                formattedData += `- ${req.itemName || 'Requisition'} | Cost: ${cost} | Status: ${req.status || 'unknown'} | Urgency: ${req.urgency || 'medium'} | Employee: ${employeeName}\n`;
             });
         }
         
         if (procurementData.pendingApprovals && procurementData.pendingApprovals.length > 0) {
-            formattedData += `\nPENDING APPROVALS: ${procurementData.pendingApprovals.length} items\n`;
+            formattedData += `\nPENDING APPROVALS ASSIGNED TO THIS USER: ${procurementData.pendingApprovals.length} item(s)\n`;
+            procurementData.pendingApprovals.forEach(req => {
+                const employeeName = req.employee
+                    ? `${req.employee.firstName || ''} ${req.employee.lastName || ''}`.trim()
+                    : 'Unknown employee';
+                const cost = typeof req.estimatedCost === 'number'
+                    ? req.estimatedCost.toFixed(2)
+                    : 'N/A';
+                formattedData += `- ${req.itemName || 'Requisition'} | Cost: ${cost} | Status: ${req.status || 'pending'} | Requester: ${employeeName}\n`;
+            });
         }
         
         if (procurementData.activeRFQs && procurementData.activeRFQs.length > 0) {
-            formattedData += `\nACTIVE RFQs: ${procurementData.activeRFQs.length} open requests\n`;
+            formattedData += `\nACTIVE RFQs (open or pending): ${procurementData.activeRFQs.length} item(s)\n`;
+            procurementData.activeRFQs.forEach(rfq => {
+                const deadline = rfq.deadline ? new Date(rfq.deadline).toISOString().slice(0, 10) : 'N/A';
+                formattedData += `- ${rfq.itemName || 'RFQ'} | Status: ${rfq.status || 'open'} | Deadline: ${deadline} | Priority: ${rfq.priority || 'medium'}\n`;
+            });
         }
         
         if (procurementData.recommendedVendors && procurementData.recommendedVendors.length > 0) {
-            formattedData += `\nRECOMMENDED VENDORS: ${procurementData.recommendedVendors.length} suggestions\n`;
+            formattedData += `\nRECOMMENDED VENDORS (approved & top-rated): ${procurementData.recommendedVendors.length} suggestion(s)\n`;
+            procurementData.recommendedVendors.forEach(vendor => {
+                const rating = typeof vendor.rating === 'number' ? vendor.rating.toFixed(1) : 'N/A';
+                const categories = Array.isArray(vendor.categories) && vendor.categories.length > 0
+                    ? vendor.categories.join(', ')
+                    : 'Unspecified categories';
+                const description = vendor.businessDescription || 'No description provided';
+                formattedData += `- ${vendor.name || 'Vendor'} | Rating: ${rating}/5 | Categories: ${categories} | ${description}\n`;
+            });
         }
 
         return formattedData || "No specific procurement data available.";

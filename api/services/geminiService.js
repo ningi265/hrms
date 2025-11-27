@@ -252,17 +252,29 @@ USER PROFILE:
         // Include procurement data if available
         const procurementSummary = context.procurementData?.summary;
         if (procurementSummary) {
-            prompt += `PROCUREMENT CONTEXT:\n`;
+            prompt += `PROCUREMENT CONTEXT (summary):\n`;
             if (procurementSummary.totalRequisitions > 0) {
                 prompt += `- Total Requisitions: ${procurementSummary.totalRequisitions}\n`;
             }
             if (procurementSummary.pendingApprovalsCount > 0) {
-                prompt += `- Pending Approvals: ${procurementSummary.pendingApprovalsCount}\n`;
+                prompt += `- Pending Approvals Assigned To User: ${procurementSummary.pendingApprovalsCount}\n`;
             }
             if (procurementSummary.activeRFQsCount > 0) {
-                prompt += `- Active RFQs: ${procurementSummary.activeRFQsCount}\n`;
+                prompt += `- Active RFQs (open or pending): ${procurementSummary.activeRFQsCount}\n`;
+            }
+            if (typeof procurementSummary.recommendedVendorsCount === 'number' && procurementSummary.recommendedVendorsCount > 0) {
+                prompt += `- Recommended Vendors: ${procurementSummary.recommendedVendorsCount}\n`;
+            }
+            if (typeof procurementSummary.myRequisitionsCount === 'number' && procurementSummary.myRequisitionsCount > 0) {
+                prompt += `- Recent Requisitions Created By User: ${procurementSummary.myRequisitionsCount}\n`;
             }
             prompt += '\n';
+        }
+
+        // Add structured procurement detail block for the model
+        if (context.procurementData) {
+            prompt += `DETAILED PROCUREMENT DATA (for grounding):\n`;
+            prompt += this.formatProcurementData(context.procurementData) + '\n\n';
         }
 
         // Include conversation history
@@ -293,13 +305,42 @@ USER PROFILE:
             formattedData += `• Total Requisitions: ${summary.totalRequisitions}\n`;
         }
         if (summary.pendingApprovalsCount > 0) {
-            formattedData += `• Pending Approvals: ${summary.pendingApprovalsCount}\n`;
+            formattedData += `• Pending Approvals Assigned To User: ${summary.pendingApprovalsCount}\n`;
         }
         if (summary.activeRFQsCount > 0) {
-            formattedData += `• Active RFQs: ${summary.activeRFQsCount}\n`;
+            formattedData += `• Active RFQs (open or pending): ${summary.activeRFQsCount}\n`;
         }
         if (summary.recommendedVendorsCount > 0) {
             formattedData += `• Recommended Vendors: ${summary.recommendedVendorsCount}\n`;
+        }
+        if (summary.myRequisitionsCount > 0) {
+            formattedData += `• Recent Requisitions Created By User: ${summary.myRequisitionsCount}\n`;
+        }
+
+        // Add detailed requisition information when available
+        if (procurementData.myRequisitions && procurementData.myRequisitions.length > 0) {
+            formattedData += `\nRecent Requisitions:\n`;
+            procurementData.myRequisitions.forEach(req => {
+                const employeeName = req.employee
+                    ? `${req.employee.firstName || ''} ${req.employee.lastName || ''}`.trim()
+                    : 'Unknown employee';
+                const cost = typeof req.estimatedCost === 'number'
+                    ? req.estimatedCost.toFixed(2)
+                    : 'N/A';
+                formattedData += `- ${req.itemName || 'Requisition'} | Cost: ${cost} | Status: ${req.status || 'unknown'} | Urgency: ${req.urgency || 'medium'} | Employee: ${employeeName}\n`;
+            });
+        }
+
+        if (procurementData.recommendedVendors && procurementData.recommendedVendors.length > 0) {
+            formattedData += `\nTop Vendors:\n`;
+            procurementData.recommendedVendors.forEach(vendor => {
+                const rating = typeof vendor.rating === 'number' ? vendor.rating.toFixed(1) : 'N/A';
+                const categories = Array.isArray(vendor.categories) && vendor.categories.length > 0
+                    ? vendor.categories.join(', ')
+                    : 'Unspecified categories';
+                const description = vendor.businessDescription || 'No description provided';
+                formattedData += `- ${vendor.name || 'Vendor'} | Rating: ${rating}/5 | Categories: ${categories} | ${description}\n`;
+            });
         }
 
         return formattedData || "No specific procurement data available.";

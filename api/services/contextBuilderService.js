@@ -116,11 +116,14 @@ class ContextBuilderService {
                     pendingApprovals: [],
                     activeRFQs: [],
                     recommendedVendors: [],
+                    // Recent requisitions created by this user (employee)
+                    myRequisitions: [],
                     summary: {
                         totalRequisitions: 0,
                         pendingApprovalsCount: 0,
                         activeRFQsCount: 0,
-                        recommendedVendorsCount: 0
+                        recommendedVendorsCount: 0,
+                        myRequisitionsCount: 0
                     }
                 },
                 suggestions: []
@@ -159,12 +162,13 @@ class ContextBuilderService {
                 try {
                     console.log('📊 Fetching requisition statistics...');
                     const requisitionStats = await Requisition.aggregate([
-                        { $match: { createdBy: new mongoose.Types.ObjectId(userId) } },
+                        { $match: { employee: new mongoose.Types.ObjectId(userId) } },
                         {
                             $group: {
                                 _id: '$status',
                                 count: { $sum: 1 },
-                                totalAmount: { $sum: '$amount' }
+                                // Sum based on actual schema field name
+                                totalAmount: { $sum: '$estimatedCost' }
                             }
                         }
                     ]);
@@ -172,6 +176,17 @@ class ContextBuilderService {
                     context.procurementData.requisitionStats = requisitionStats || [];
                     context.procurementData.summary.totalRequisitions = requisitionStats?.reduce((sum, stat) => sum + stat.count, 0) || 0;
                     console.log(`✅ Requisitions: ${context.procurementData.summary.totalRequisitions} total`);
+
+                    // Also fetch the most recent requisitions created by this user
+                    console.log('📋 Fetching recent user requisitions...');
+                    const myRequisitions = await Requisition.find({ employee: userId })
+                        .populate('employee', 'firstName lastName')
+                        .sort({ createdAt: -1 })
+                        .limit(5);
+
+                    context.procurementData.myRequisitions = myRequisitions || [];
+                    context.procurementData.summary.myRequisitionsCount = myRequisitions?.length || 0;
+                    console.log(`✅ Recent requisitions: ${context.procurementData.summary.myRequisitionsCount}`);
                 } catch (error) {
                     console.error('❌ Error fetching requisition stats:', error.message);
                 }
@@ -184,10 +199,11 @@ class ContextBuilderService {
                 try {
                     console.log('📋 Fetching pending approvals...');
                     const pendingApprovals = await Requisition.find({
-                        'approvals.approverId': userId,
-                        'approvals.status': 'pending'
+                        approver: userId,
+                        status: 'pending'
                     })
-                    .populate('createdBy', 'firstName lastName')
+                    .populate('employee', 'firstName lastName')
+                    .populate('approver', 'firstName lastName')
                     .sort({ createdAt: -1 })
                     .limit(5);
                     
@@ -205,8 +221,8 @@ class ContextBuilderService {
             if (this.shouldIncludeVendors(message) && Vendor) {
                 try {
                     console.log('🏢 Fetching vendor data...');
-                    const vendors = await Vendor.find({ status: 'approved' })
-                        .sort({ performanceScore: -1 })
+                    const vendors = await Vendor.find({ registrationStatus: 'approved' })
+                        .sort({ rating: -1 })
                         .limit(5);
                     
                     context.procurementData.recommendedVendors = vendors || [];
@@ -224,8 +240,11 @@ class ContextBuilderService {
                 try {
                     console.log('📝 Fetching RFQ data...');
                     const activeRFQs = await RFQ.find({
-                        createdBy: userId,
-                        status: { $in: ['open', 'in_progress'] }
+                        status: { $in: ['open', 'pending'] },
+                        $or: [
+                            { procurementOfficer: userId },
+                            { vendors: userId }
+                        ]
                     })
                     .sort({ deadline: 1 })
                     .limit(5);
@@ -249,11 +268,13 @@ class ContextBuilderService {
                 pendingApprovals: [],
                 activeRFQs: [],
                 recommendedVendors: [],
+                myRequisitions: [],
                 summary: {
                     totalRequisitions: 0,
                     pendingApprovalsCount: 0,
                     activeRFQsCount: 0,
-                    recommendedVendorsCount: 0
+                    recommendedVendorsCount: 0,
+                    myRequisitionsCount: 0
                 }
             };
         }
