@@ -339,7 +339,16 @@ USER PROFILE:
                     ? vendor.categories.join(', ')
                     : 'Unspecified categories';
                 const description = vendor.businessDescription || 'No description provided';
-                formattedData += `- ${vendor.name || 'Vendor'} | Rating: ${rating}/5 | Categories: ${categories} | ${description}\n`;
+
+                // Contact person: referenced User on vendor/vendor or vendor/user
+                const contact = vendor.vendor || vendor.user || null;
+                const contactName = contact
+                    ? `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Unknown contact'
+                    : 'Unknown contact';
+                const contactEmail = contact?.email || 'not available';
+                const businessName = vendor.name || 'Unknown business';
+
+                formattedData += `- Vendor: ${contactName} (Email: ${contactEmail}) - Business: ${businessName}, Rating: ${rating}/5, Categories: ${categories} | ${description}\n`;
             });
         }
 
