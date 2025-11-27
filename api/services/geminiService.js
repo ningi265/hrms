@@ -1,17 +1,89 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const axios = require('axios');
 
 class GeminiService {
     constructor() {
         this.apiKey = process.env.GEMINI_API_KEY;
-        this.genAI = this.apiKey ? new GoogleGenerativeAI(this.apiKey) : null;
-        // Updated model name - use the latest available model
-        this.modelName = 'gemini-1.5-flash-latest'; // or 'gemini-pro' for older accounts
+        this.baseURL = 'https://generativelanguage.googleapis.com/v1';
+        this.client = this.apiKey
+            ? axios.create({
+                baseURL: this.baseURL,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': this.apiKey
+                },
+                timeout: 30000
+            })
+            : null;
+        // Optional: allow overriding model via environment
+        this.configuredModel = process.env.GEMINI_MODEL || null;
+        // Default Gemini model; will be overridden when a working model is detected
+        this.modelName = this.configuredModel || 'gemini-1.5-flash-latest';
+        this.modelResolved = !!this.configuredModel;
+    }
+
+    async ensureModel() {
+        try {
+            if (!this.client) {
+                return false;
+            }
+
+            // If we already resolved a working model, reuse it
+            if (this.modelResolved && this.modelName) {
+                return true;
+            }
+
+            // If an explicit model is configured, trust it once
+            if (this.configuredModel && !this.modelResolved) {
+                this.modelName = this.configuredModel;
+                this.modelResolved = true;
+                console.log(`🔧 Using configured Gemini model from env: ${this.modelName}`);
+                return true;
+            }
+
+            console.log('🔍 Discovering available Gemini models via ListModels...');
+            const res = await this.client.get('/models');
+            const models = res.data.models || [];
+
+            if (!models.length) {
+                console.log('❌ No models returned from Gemini ListModels');
+                return false;
+            }
+
+            // Prefer Gemini models that support generateContent
+            const generativeGemini = models.find(m =>
+                (m.supportedGenerationMethods || []).includes('generateContent') &&
+                m.name && m.name.includes('gemini')
+            );
+            const anyGenerative = models.find(m =>
+                (m.supportedGenerationMethods || []).includes('generateContent')
+            );
+
+            const chosen = generativeGemini || anyGenerative;
+            if (!chosen) {
+                console.log('❌ No models with generateContent support found in ListModels');
+                return false;
+            }
+
+            const fullName = chosen.name; // e.g. 'models/gemini-1.0-pro'
+            const shortName = fullName && fullName.startsWith('models/')
+                ? fullName.substring('models/'.length)
+                : fullName;
+
+            this.modelName = shortName;
+            this.modelResolved = true;
+
+            console.log(`✅ Using discovered Gemini model: ${fullName} (short: ${this.modelName})`);
+            return true;
+        } catch (error) {
+            const msg = error.response?.data?.error?.message || error.message;
+            console.error('❌ Failed to discover Gemini models via ListModels:', msg);
+            return false;
+        }
     }
 
     async generateResponse(messages, context = {}) {
         try {
-            // Check if Gemini is configured
-            if (!this.genAI) {
+            if (!this.client) {
                 console.log('❌ Gemini API not configured - missing API key');
                 return {
                     success: false,
@@ -19,104 +91,142 @@ class GeminiService {
                 };
             }
 
+            const hasModel = await this.ensureModel();
+            if (!hasModel) {
+                console.log('❌ No suitable Gemini model available for generateContent');
+                return {
+                    success: false,
+                    error: 'No suitable Gemini model available for generateContent'
+                };
+            }
+
             console.log(`🔧 Using Gemini model: ${this.modelName}`);
-            
-            const model = this.genAI.getGenerativeModel({ 
-                model: this.modelName,
+
+            const prompt = this.buildPrompt(messages, context);
+
+            console.log('📤 Sending request to Gemini API (v1)...');
+            const response = await this.client.post(`/models/${this.modelName}:generateContent`, {
+                contents: [
+                    {
+                        role: 'user',
+                        parts: [{ text: prompt }]
+                    }
+                ],
                 generationConfig: {
                     temperature: 0.7,
                     topK: 40,
                     topP: 0.95,
-                    maxOutputTokens: 1000,
+                    maxOutputTokens: 1000
                 }
             });
 
-            const prompt = this.buildPrompt(messages, context);
-            
-            console.log('📤 Sending request to Gemini API...');
-            const result = await model.generateContent(prompt);
-            const response = await result.response;
-            const text = response.text();
+            const candidates = response.data.candidates || [];
+            const text = candidates.length > 0
+                ? (candidates[0].content?.parts || [])
+                    .map(part => part.text || '')
+                    .join(' ')
+                    .trim()
+                : '';
 
             console.log('✅ Gemini response received successfully');
-            
+
             return {
                 success: true,
-                message: text,
+                message: text || 'Gemini returned an empty response',
                 usage: {
-                    totalTokens: response.usageMetadata?.totalTokenCount || 0
+                    totalTokens: response.data.usageMetadata?.totalTokenCount || 0
                 }
             };
         } catch (error) {
-            console.error('❌ Gemini API Error:', error.message);
-            
-            // Handle specific Gemini errors
-            if (error.message.includes('404') || error.message.includes('not found')) {
-                console.log('🔄 Model not found, trying alternative model...');
-                return await this.tryAlternativeModel(messages, context);
+            const message = error.response?.data?.error?.message || error.message || 'Unknown Gemini error';
+            console.error('❌ Gemini API Error:', message);
+
+            if (error.response) {
+                if (error.response.status === 404) {
+                    console.log('🔄 Model not found, trying alternative model...');
+                    return await this.tryAlternativeModel(messages, context);
+                }
+
+                if (error.response.status === 401 || error.response.status === 403) {
+                    console.log('❌ Gemini API key or auth issue');
+                    return {
+                        success: false,
+                        error: 'Invalid or unauthorized Gemini API key'
+                    };
+                }
             }
-            
-            if (error.message.includes('API key') || error.message.includes('auth')) {
-                console.log('❌ Gemini API key issue');
-                return {
-                    success: false,
-                    error: 'Invalid Gemini API key'
-                };
-            }
-            
+
             return {
                 success: false,
-                error: error.message || 'Failed to generate Gemini response'
+                error: message || 'Failed to generate Gemini response'
             };
         }
     }
 
     async tryAlternativeModel(messages, context) {
         try {
+            if (!this.client) {
+                console.log('❌ Gemini API not configured - missing API key');
+                return {
+                    success: false,
+                    error: 'Gemini API not configured'
+                };
+            }
+
             console.log('🔄 Trying alternative Gemini models...');
-            
+
             // Try different model names
             const alternativeModels = [
                 'gemini-1.5-flash',
+                'gemini-1.5-flash-latest',
                 'gemini-1.0-pro',
-                'gemini-pro',
-                'models/gemini-pro'
+                'gemini-pro'
             ];
-            
+
             for (const modelName of alternativeModels) {
                 try {
                     console.log(`🔧 Trying model: ${modelName}`);
-                    const model = this.genAI.getGenerativeModel({ 
-                        model: modelName,
+
+                    const prompt = this.buildPrompt(messages, context);
+                    const response = await this.client.post(`/models/${modelName}:generateContent`, {
+                        contents: [
+                            {
+                                role: 'user',
+                                parts: [{ text: prompt }]
+                            }
+                        ],
                         generationConfig: {
                             temperature: 0.7,
-                            maxOutputTokens: 1000,
+                            maxOutputTokens: 1000
                         }
                     });
 
-                    const prompt = this.buildPrompt(messages, context);
-                    const result = await model.generateContent(prompt);
-                    const response = await result.response;
-                    const text = response.text();
+                    const candidates = response.data.candidates || [];
+                    const text = candidates.length > 0
+                        ? (candidates[0].content?.parts || [])
+                            .map(part => part.text || '')
+                            .join(' ')
+                            .trim()
+                        : '';
 
                     console.log(`✅ Success with model: ${modelName}`);
                     this.modelName = modelName; // Remember working model
-                    
+
                     return {
                         success: true,
-                        message: text,
+                        message: text || 'Gemini returned an empty response',
                         usage: {
-                            totalTokens: response.usageMetadata?.totalTokenCount || 0
+                            totalTokens: response.data.usageMetadata?.totalTokenCount || 0
                         }
                     };
                 } catch (modelError) {
-                    console.log(`❌ Model ${modelName} failed:`, modelError.message);
+                    const msg = modelError.response?.data?.error?.message || modelError.message;
+                    console.log(`❌ Model ${modelName} failed:`, msg);
                     continue;
                 }
             }
-            
+
             throw new Error('All Gemini models failed');
-            
         } catch (error) {
             console.error('❌ All alternative models failed:', error.message);
             return {
@@ -197,39 +307,59 @@ USER PROFILE:
 
     async checkStatus() {
         try {
-            if (!this.genAI) {
+            if (!this.client) {
                 console.log('❌ Gemini not configured');
                 return false;
             }
 
             console.log('🔍 Checking Gemini API status...');
-            
-            // Try multiple models for status check
-            const testModels = [
-                'gemini-1.5-flash-latest',
-                'gemini-1.5-flash',
-                'gemini-1.0-pro',
-                'gemini-pro'
-            ];
-            
-            for (const modelName of testModels) {
-                try {
-                    const model = this.genAI.getGenerativeModel({ model: modelName });
-                    const result = await model.generateContent('Say "online"');
-                    await result.response;
-                    
+
+            const hasModel = await this.ensureModel();
+            if (!hasModel) {
+                console.log('❌ No suitable Gemini model available during status check');
+                return false;
+            }
+
+            const modelName = this.modelName;
+            let apiReachable = false;
+
+            try {
+                const response = await this.client.post(`/models/${modelName}:generateContent`, {
+                    contents: [
+                        {
+                            role: 'user',
+                            parts: [{ text: 'Say "online"' }]
+                        }
+                    ],
+                    generationConfig: {
+                        maxOutputTokens: 10,
+                        temperature: 0.1
+                    }
+                });
+
+                if (response.status === 200) {
                     console.log(`✅ Gemini status check passed with model: ${modelName}`);
-                    this.modelName = modelName; // Set working model
                     return true;
-                } catch (error) {
-                    console.log(`❌ Gemini model ${modelName} failed:`, error.message);
-                    continue;
+                }
+            } catch (error) {
+                if (error.response) {
+                    apiReachable = true; // Service responded, even if with an error status
+                    const msg = error.response.data?.error?.message || error.message;
+                    console.log(`❌ Gemini status check failed for model ${modelName}:`, msg);
+                } else if (error.request) {
+                    console.log(`❌ Gemini status check failed with no response (network issue)`);
+                } else {
+                    console.log(`❌ Gemini status check configuration error:`, error.message);
                 }
             }
-            
-            console.log('❌ All Gemini models failed status check');
+
+            if (apiReachable) {
+                console.log('ℹ️ Gemini API reachable but model request failed during status check');
+                return true;
+            }
+
+            console.log('❌ Gemini status check failed - API not reachable');
             return false;
-            
         } catch (error) {
             console.error('❌ Gemini status check failed:', error.message);
             return false;
