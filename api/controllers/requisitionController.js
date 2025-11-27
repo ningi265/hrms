@@ -292,6 +292,85 @@ exports.getAllRequisitions = async (req, res) => {
     }
 };
 
+exports.getAllApprovedRequisitions = async (req, res) => {
+  try {
+    // Get the requesting user's company
+    console.log("Requesting user ID:", req.user._id);
+    const requestingUser = await User.findById(req.user._id).select('company isEnterpriseAdmin');
+    if (!requestingUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Base query - filter by company unless user is enterprise admin with special privileges
+    const statusQuery = { status: "approved" };
+    const companyQuery = requestingUser.isEnterpriseAdmin && req.query.allCompanies ? {} : { company: requestingUser.company };
+    const baseQuery = { ...statusQuery, ...companyQuery };
+
+    // Get pagination parameters
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    // Get sorting parameters
+    const sortField = req.query.sortBy || 'createdAt';
+    const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
+    const sort = { [sortField]: sortOrder };
+
+    // Get pending requisitions with populated employee and department info
+    const requisitions = await Requisition.find(baseQuery)
+      .populate({
+        path: 'employee',
+        select: 'firstName lastName email position',
+        populate: {
+          path: 'department',
+          select: 'name departmentCode'
+        }
+      })
+      .populate({
+        path: 'department',
+        select: 'name departmentCode'
+      })
+      .populate({
+        path: 'company',
+        select: 'name'
+      })
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    // Get total count for pagination
+    const totalCount = await Requisition.countDocuments(baseQuery);
+
+    console.log(`Fetched ${requisitions.length} approved requisitions for company ${requestingUser.company}`);
+
+    res.status(200).json({
+      success: true,
+      data: requisitions,
+      meta: {
+        total: totalCount,
+        page,
+        limit,
+        totalPages: Math.ceil(totalCount / limit),
+        sort: `${sortField}:${sortOrder === 1 ? 'asc' : 'desc'}`,
+        context: {
+          company: requestingUser.company,
+          isEnterpriseAdmin: requestingUser.isEnterpriseAdmin,
+          allCompanies: req.query.allCompanies ? true : false
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching approved requisitions:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error while fetching approved requisitions',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 //pending
 exports.getAllPendingRequisitions = async (req, res) => {
   try {

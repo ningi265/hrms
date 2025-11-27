@@ -10,7 +10,8 @@ const {
     getPendingRequisitions,
      getAllPendingRequisitions,
     getRequisitionStats,
-    travelRequisition
+    travelRequisition,
+   getAllApprovedRequisitions
 } = require("../api/controllers/requisitionController");
 const { protect } = require("../api/middleware/authMiddleware");
 
@@ -59,6 +60,8 @@ router.get("/my", protect(billingRoles), getMyRequisitions);
 
 // Procurement/Admin: Get all requisitions
 router.get("/", protect(billingRoles), getAllRequisitions);
+
+router.get("/all/approved", protect(billingRoles), getAllApprovedRequisitions);
 
 // Procurement/Admin: Approve requisition
 router.put("/:id/approve", protect(billingRoles), approveRequisition);

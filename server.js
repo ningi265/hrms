@@ -8,7 +8,6 @@ const bodyParser = require('body-parser');
 const path = require('path');
 const morgan = require('morgan');
 
-
 // Load environment variables
 dotenv.config();
 
@@ -122,7 +121,10 @@ const bidRoutes = require('./routes/bidRoutes');
 // Initialize usage monitoring
 const { scheduleMonthlyReset } = require('./utils/usageUtils');
 const { scheduleUsageAlerts } = require('./api/services/usageAlertsService');
-const { startTenderAutoCloseCron } = require('./api/services/tenderAutoClose');   
+const { startTenderAutoCloseCron } = require('./api/services/tenderAutoClose'); 
+
+const aiRoutes = require("./routes/aiRoutes");
+
 
 
 
@@ -146,6 +148,7 @@ app.use("/api/billing", billingRoutes);
 app.use("/api/tenders", tendersRoutes);
 app.use("/api/prequalifications", vendorPreQualificationRoutes);
 app.use('/api/bids', bidRoutes);
+app.use("/api/ai", aiRoutes);
 // New budget allocation routes
 app.use("/api/budget-allocations", budgetRoutes);
 

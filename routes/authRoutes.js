@@ -36,7 +36,11 @@ const {
   getEmployeeById,
   completeRegistration,
   getUsersForManagement,
-  googleLogin
+  googleLogin,
+        getAIChatSuggestions,
+        getAIConversationHistory,
+        processAIChatMessage,
+        clearAIConversation,
 } = require("../api/controllers/authController");
 const { protect } = require("../api/middleware/authMiddleware");
 
@@ -195,4 +199,27 @@ router.get('/employees/:id',protect(["admin", "procurement_officer","vendor","IT
         "Management",
         "Human Resources",
         "Accounting/Finance","Sales/Marketing","Vendor","Enterprise(CEO, CFO, etc.)"]),getEmployeeById );
+
+
+// AI Chat Routes
+router.get('/ai/suggestions', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance","Sales/Marketing","Vendor","Enterprise(CEO, CFO, etc.)"]),getAIChatSuggestions);
+router.get('/ai/conversation', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance","Sales/Marketing","Vendor","Enterprise(CEO, CFO, etc.)"]),getAIConversationHistory);
+router.post('/ai/chat', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance","Sales/Marketing","Vendor","Enterprise(CEO, CFO, etc.)"]),processAIChatMessage);
+router.delete('/ai/conversation', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance","Sales/Marketing","Vendor","Enterprise(CEO, CFO, etc.)"]),clearAIConversation);
 module.exports = router;
