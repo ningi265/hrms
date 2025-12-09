@@ -223,7 +223,32 @@ class ContextBuilderService {
                     console.log('🏢 Fetching vendor data...');
                     const vendors = await Vendor.find({ registrationStatus: 'approved' })
                         .sort({ rating: -1 })
-                        .limit(5);
+                        .limit(5)
+                        // Populate both possible user references for contact info
+                        .populate('vendor', 'firstName lastName email')
+                        .populate('user', 'firstName lastName email');
+
+                    // Debug logging to verify populated contact data
+                    if (vendors && vendors.length > 0) {
+                        const sample = vendors[0];
+                        console.log('🔍 Sample vendor contact data:', {
+                            vendorId: sample._id?.toString(),
+                            businessName: sample.name,
+                            rating: sample.rating,
+                            contactVendor: sample.vendor ? {
+                                id: sample.vendor._id?.toString(),
+                                name: `${sample.vendor.firstName || ''} ${sample.vendor.lastName || ''}`.trim(),
+                                email: sample.vendor.email || null
+                            } : null,
+                            contactUser: sample.user ? {
+                                id: sample.user._id?.toString(),
+                                name: `${sample.user.firstName || ''} ${sample.user.lastName || ''}`.trim(),
+                                email: sample.user.email || null
+                            } : null
+                        });
+                    } else {
+                        console.log('ℹ️ No approved vendors found to recommend');
+                    }
                     
                     context.procurementData.recommendedVendors = vendors || [];
                     context.procurementData.summary.recommendedVendorsCount = vendors?.length || 0;
