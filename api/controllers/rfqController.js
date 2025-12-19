@@ -136,7 +136,7 @@ exports.createRFQ = async (req, res) => {
 
         // Log the RFQ creation activity
         console.log(`RFQ created: ${rfq._id} by ${req.user.firstName || req.user._id} for ${itemName}`);
-        console.log(`Notifications: ${notificationResults.successful} sent, ${notificationResults.failed} failed`);
+        //console.log(`Notifications: ${notificationResults.successful} sent, ${notificationResults.failed} failed`);
 
         res.status(201).json({ 
             success: true,
