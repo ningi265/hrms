@@ -16,9 +16,9 @@ const app = express();
 const server = http.createServer(app);
 
 const allowedOrigins = [
-  'https://nexusmwi.com',
+  'https://app.nexusmwi.com',
   'https://www.nexusmwi.com',
-  'http://localhost:3000',
+  'http://localhost:5173',
 ];
 
 // Socket.IO setup with CORS
@@ -695,7 +695,7 @@ process.on('SIGINT', () => {
 });
 
 // Start the server
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 4001;
 server.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
   console.log(`WebSocket server is ready on port ${PORT}`);

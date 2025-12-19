@@ -52,7 +52,7 @@ exports.createRFQ = async (req, res) => {
     
     try {
         const { 
-            vendors, 
+            
             itemName, 
             quantity, 
             deadline,
@@ -65,9 +65,9 @@ exports.createRFQ = async (req, res) => {
         } = req.body;
 
         // Validate required fields
-        if (!itemName || !quantity || !vendors || vendors.length === 0) {
+        if (!itemName || !quantity ) {
             return res.status(400).json({ 
-                message: "Item name, quantity, and at least one vendor are required" 
+                message: "Item name, quantity, are required" 
             });
         }
 
@@ -82,17 +82,6 @@ exports.createRFQ = async (req, res) => {
         const procurementOfficer = await User.findById(req.user._id)
             .select('firstName lastName email companyName');
 
-        // Ensure vendors is an array of valid vendor IDs
-        const validVendors = await User.find({ 
-            _id: { $in: vendors },
-            role: 'Vendor' 
-        }).select('firstName lastName email phoneNumber companyName');
-
-        if (validVendors.length !== vendors.length) {
-            return res.status(400).json({ 
-                message: "One or more vendor IDs are invalid" 
-            });
-        }
 
         // Validate requisition if provided
         let requisition = null;
@@ -115,7 +104,6 @@ exports.createRFQ = async (req, res) => {
             procurementOfficer: req.user._id,
             company: requestingUser.company,
             department: requestingUser.department,
-            vendors,
             itemName,
             quantity: parseInt(quantity),
             deadline: deadline ? new Date(deadline) : null,
@@ -146,78 +134,6 @@ exports.createRFQ = async (req, res) => {
             })
             : 'Not specified';
 
-        // Send notifications to each vendor using SendGrid
-        const notificationResults = {
-            successful: 0,
-            failed: 0,
-            total: validVendors.length
-        };
-
-        for (const vendor of validVendors) {
-            try {
-                const vendorName = `${vendor.firstName} ${vendor.lastName}`.trim() || vendor.email;
-                const rfqLink = `${process.env.FRONTEND_URL}/rfqs/${rfq._id}`;
-
-                // Prepare SendGrid email
-                const msg = {
-                    to: vendor.email,
-                    from: {
-                        name: procurementOfficer.companyName || 'NexusMWI Procurement',
-                        email: process.env.SENDGRID_FROM_EMAIL || 'procurement@nexusmwi.com'
-                    },
-                    subject: `New RFQ Opportunity: ${itemName}`,
-                    html: `
-                        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 5px;">
-                            <h2 style="color: #333;">New Request for Quotation</h2>
-                            <p>Dear ${vendorName},</p>
-                            <p>You have been invited to submit a quote for the following item:</p>
-                            
-                            <div style="background-color: #f8f9fa; border-radius: 8px; padding: 15px; margin: 15px 0;">
-                                <h3 style="margin-top: 0; color: #2c3e50;">${itemName}</h3>
-                                <ul style="padding-left: 20px;">
-                                    <li><strong>Quantity:</strong> ${quantity}</li>
-                                    <li><strong>Deadline:</strong> ${formattedDeadline}</li>
-                                    ${description ? `<li><strong>Description:</strong> ${description}</li>` : ''}
-                                    ${specifications ? `<li><strong>Specifications:</strong> ${specifications}</li>` : ''}
-                                    ${deliveryLocation ? `<li><strong>Delivery Location:</strong> ${deliveryLocation}</li>` : ''}
-                                </ul>
-                            </div>
-
-                            <p>This RFQ was created by ${procurementOfficer.firstName} ${procurementOfficer.lastName} from ${procurementOfficer.companyName}.</p>
-                            
-                            <div style="margin: 20px 0; text-align: center;">
-                                <a href="${rfqLink}" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">
-                                    View RFQ Details
-                                </a>
-                            </div>
-                            
-                            <p style="font-size: 12px; color: #777;">Or copy and paste this link into your browser: ${rfqLink}</p>
-                            
-                            <p>Please submit your quote before the deadline to be considered for this opportunity.</p>
-                            
-                            <p>Best regards,<br/>
-                            ${procurementOfficer.companyName || 'NexusMWI'} Procurement Team</p>
-                        </div>
-                    `,
-                    text: `New Request for Quotation\n\nDear ${vendorName},\n\nYou have been invited to submit a quote for:\n\nItem: ${itemName}\nQuantity: ${quantity}\nDeadline: ${formattedDeadline}\n\nThis RFQ was created by ${procurementOfficer.firstName} ${procurementOfficer.lastName} from ${procurementOfficer.companyName}.\n\nView RFQ details: ${rfqLink}\n\nPlease submit your quote before the deadline.\n\nBest regards,\n${procurementOfficer.companyName || 'NexusMWI'} Procurement Team`
-                };
-
-                // Send email via SendGrid API
-                await sgMail.send(msg);
-                notificationResults.successful++;
-                console.log(`RFQ notification sent to ${vendor.email}`);
-                
-            } catch (emailError) {
-                notificationResults.failed++;
-                console.error(`Failed to send RFQ notification to ${vendor.email}:`, emailError);
-                // Continue with next vendor even if one fails
-            }
-        }
-
-        // Update RFQ with notification status
-        rfq.notificationsSent = notificationResults.successful > 0;
-        await rfq.save();
-
         // Log the RFQ creation activity
         console.log(`RFQ created: ${rfq._id} by ${req.user.firstName || req.user._id} for ${itemName}`);
         console.log(`Notifications: ${notificationResults.successful} sent, ${notificationResults.failed} failed`);
@@ -231,15 +147,9 @@ exports.createRFQ = async (req, res) => {
                 quantity: rfq.quantity,
                 deadline: rfq.deadline,
                 priority: rfq.priority,
-                vendorCount: rfq.vendors.length,
                 status: rfq.status,
                 createdAt: rfq.createdAt
             },
-            notifications: {
-                sent: notificationResults.successful,
-                failed: notificationResults.failed,
-                total: notificationResults.total
-            }
         });
 
     } catch (err) {

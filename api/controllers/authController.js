@@ -13,6 +13,7 @@ const postmark = require('postmark');
 //const {sendEmailNotification} = require("../services/notificationService");
 
 
+
 function generatedSecurePassword() {
   const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?";
   let password = "";
@@ -28,6 +29,54 @@ const twilioClient = twilio(
     process.env.TWILIO_ACCOUNT_SID,
     process.env.TWILIO_AUTH_TOKEN
 );
+
+const createGmailTransporter = () => {
+  // Use your provided credentials
+  const gmailUser = process.env.GMAIL_USER || 'brianmtonga592@gmail.com';
+  const gmailAppPassword = process.env.GMAIL_APP_PASSWORD || 'fmcznqzyywlscpgs';
+  
+  if (!gmailUser || !gmailAppPassword) {
+    console.warn('⚠️ Gmail credentials not found. Please check your .env file');
+    console.warn('Required: GMAIL_USER and GMAIL_APP_PASSWORD');
+    return null;
+  }
+  
+  console.log(`✅ Using Gmail account: ${gmailUser}`);
+  
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: gmailUser,
+      pass: gmailAppPassword
+    }
+  });
+};
+
+
+// Create test account for development
+const createTestAccount = async () => {
+  try {
+    const testAccount = await nodemailer.createTestAccount();
+    console.log('⚠️ Using Ethereal test account (for development only):');
+    console.log('• Email:', testAccount.user);
+    console.log('• Password:', testAccount.pass);
+    console.log('• Web Interface: https://ethereal.email');
+    console.log('• Preview emails at: https://ethereal.email/messages');
+    
+    return nodemailer.createTransport({
+      host: 'smtp.ethereal.email',
+      port: 587,
+      secure: false,
+      auth: {
+        user: testAccount.user,
+        pass: testAccount.pass
+      }
+    });
+  } catch (error) {
+    console.error('Failed to create test account:', error);
+    return null;
+  }
+};
 
 
 const sgMail = require('@sendgrid/mail');
@@ -1917,7 +1966,7 @@ exports.updateEmployee = async (req, res) => {
 };
 
 // Create new employee within an enterprise
-exports.createEmployee = async (req, res) => {
+exports.createEmployee1 = async (req, res) => {
   console.log("Incoming Create Employee Request:", req.body);   
   try {
     // Verify the requesting user is an enterprise admin
@@ -2178,6 +2227,343 @@ exports.createEmployee = async (req, res) => {
     });
   }
 };
+
+
+exports.createEmployee = async (req, res) => {
+  console.log("📝 Creating employee:", req.body);
+  
+  try {
+    // Verify the requesting user is an enterprise admin
+    const requestingUser = await User.findById(req.user._id);
+    if (!requestingUser.isEnterpriseAdmin && requestingUser.role !== "Enterprise(CEO, CFO, etc.)") {
+      return res.status(403).json({
+        message: "Only enterprise admins or executives can create employees",
+        code: "ADMIN_ACCESS_REQUIRED"
+      });
+    }
+
+    const {
+      firstName,
+      lastName,
+      email,
+      phoneNumber,
+      address,
+      department,
+      departmentId,
+      position,
+      hireDate,
+      salary,
+      emergencyContact,
+      skills,
+      employmentType,
+      workLocation,
+      manager
+    } = req.body;
+
+    // Validate required fields
+    const requiredFields = ['firstName', 'lastName', 'email', 'phoneNumber', 'position'];
+    const missingFields = requiredFields.filter(field => !req.body[field]);
+    
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        message: "Missing required fields",
+        code: "MISSING_REQUIRED_FIELDS",
+        requiredFields,
+        missingFields
+      });
+    }
+
+    // Check if employee with email already exists
+    const existingEmployee = await User.findOne({ 
+      email: email.toLowerCase(),
+      company: requestingUser.company 
+    });
+    
+    if (existingEmployee) {
+      return res.status(400).json({ 
+        message: "Employee with this email already exists in your company",
+        code: "DUPLICATE_EMPLOYEE_EMAIL"
+      });
+    }
+
+    // Validate department exists
+    let validDepartmentId = null;
+    if (department || departmentId) {
+      const departmentQuery = departmentId ? 
+        { _id: departmentId, company: requestingUser.company } : 
+        { name: department, company: requestingUser.company };
+      
+      const departmentDoc = await Department.findOne(departmentQuery);
+      
+      if (!departmentDoc) {
+        return res.status(400).json({ 
+          message: "Department not found in your company",
+          code: "DEPARTMENT_NOT_FOUND"
+        });
+      }
+      validDepartmentId = departmentDoc._id;
+    }
+
+    // Generate registration token
+    const registrationToken = crypto.randomBytes(32).toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
+    
+    const registrationTokenExpires = Date.now() + 48 * 60 * 60 * 1000; // 48 hours
+
+    // Create new employee
+    const newEmployee = new User({
+      firstName,
+      lastName,
+      email: email.toLowerCase(),
+      phoneNumber,
+      address,
+      department,
+      departmentId: validDepartmentId,
+      position,
+      hireDate: hireDate ? new Date(hireDate) : new Date(),
+      salary: salary ? parseFloat(salary) : null,
+      status: 'pending',
+      emergencyContact: emergencyContact || {},
+      skills: skills || [],
+      employmentType: employmentType || 'full-time',
+      workLocation: workLocation || 'office',
+      manager: manager || null,
+      role: position,
+      company: requestingUser.company,
+      companyName: requestingUser.companyName,
+      industry: requestingUser.industry,
+      registrationStatus: 'pending',
+      registrationToken,
+      registrationTokenExpires,
+      billing: {
+        trialStartDate: requestingUser.billing?.trialStartDate || new Date(),
+        trialEndDate: requestingUser.billing?.trialEndDate || null,
+        subscription: {
+          plan: requestingUser.billing?.subscription?.plan || 'trial',
+          status: requestingUser.billing?.subscription?.status || 'trialing',
+          currentPeriodStart: requestingUser.billing?.subscription?.currentPeriodStart || new Date(),
+          currentPeriodEnd: requestingUser.billing?.subscription?.currentPeriodEnd || null,
+          cancelAtPeriodEnd: requestingUser.billing?.subscription?.cancelAtPeriodEnd || false
+        }
+      },
+      usage: {
+        apiCalls: { count: 0, lastReset: new Date() },
+        storage: { used: 0, limit: 100 }
+      }
+    });
+
+    // Save employee
+    const savedEmployee = await newEmployee.save();
+    console.log(`✅ Employee saved to database: ${savedEmployee._id}`);
+
+    // Update department
+    if (validDepartmentId) {
+      await Department.findByIdAndUpdate(validDepartmentId, {
+        $addToSet: { employees: savedEmployee._id },
+        $inc: { employeeCount: 1 }
+      });
+      console.log(`✅ Updated department ${validDepartmentId} with new employee`);
+    }
+
+    // Generate registration link
+    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const registrationLink = `${baseUrl}/complete-registration?token=${encodeURIComponent(registrationToken)}&email=${encodeURIComponent(email)}`;
+    
+    console.log(`📧 Preparing to send registration email to: ${email}`);
+    console.log(`🔗 Registration link: ${registrationLink}`);
+
+    // Send email using Gmail
+    let emailSent = false;
+    let emailError = null;
+    let emailMessageId = null;
+
+    try {
+      // Create Gmail transporter with your credentials
+      const transporter = createGmailTransporter();
+      
+      if (!transporter) {
+        throw new Error('Gmail transporter not created. Check your credentials.');
+      }
+
+      // Get sender email
+      const senderEmail = process.env.GMAIL_USER || 'brianmtonga592@gmail.com';
+      
+      // Send email
+      const mailOptions = {
+        from: {
+          name: requestingUser.companyName || 'NexusMWI',
+          address: senderEmail
+        },
+        to: email,
+        subject: `Complete Your Registration - ${requestingUser.companyName}`,
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background-color: #4CAF50; color: white; padding: 20px; text-align: center; border-radius: 5px; }
+              .content { padding: 20px; background-color: #f9f9f9; border-radius: 5px; margin-top: 20px; }
+              .button { display: inline-block; padding: 12px 24px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; }
+              .info-box { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 20px 0; }
+              .footer { margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>Welcome to ${requestingUser.companyName}</h1>
+            </div>
+            
+            <div class="content">
+              <h2>Hello ${firstName} ${lastName},</h2>
+              
+              <p>Your employee account has been created at <strong>${requestingUser.companyName}</strong>.</p>
+              
+              <p><strong>Your Details:</strong></p>
+              <ul>
+                <li><strong>Position:</strong> ${position}</li>
+                ${department ? `<li><strong>Department:</strong> ${department}</li>` : ''}
+                ${hireDate ? `<li><strong>Start Date:</strong> ${new Date(hireDate).toLocaleDateString()}</li>` : ''}
+              </ul>
+              
+              <p>To get started, please complete your registration:</p>
+              
+              <div style="text-align: center; margin: 20px 0;">
+                <a href="${registrationLink}" class="button">Complete Registration</a>
+              </div>
+              
+              <div class="info-box">
+                <p><strong>Important:</strong></p>
+                <p>• This registration link is valid for <strong>48 hours</strong></p>
+                <p>• If the button doesn't work, copy and paste this URL:</p>
+                <p style="word-break: break-all; background: #f8f9fa; padding: 10px; border-radius: 3px;">
+                  ${registrationLink}
+                </p>
+              </div>
+              
+              <p>If you have any questions, contact ${requestingUser.firstName} ${requestingUser.lastName} (${requestingUser.email}).</p>
+              
+              <div class="footer">
+                <p>Best regards,<br>
+                <strong>The ${requestingUser.companyName} Team</strong></p>
+                <p><em>This is an automated message.</em></p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `,
+        text: `
+Welcome to ${requestingUser.companyName}
+
+Hello ${firstName} ${lastName},
+
+Your employee account has been created at ${requestingUser.companyName}.
+
+Your Details:
+• Position: ${position}
+${department ? `• Department: ${department}\n` : ''}${hireDate ? `• Start Date: ${new Date(hireDate).toLocaleDateString()}\n` : ''}
+
+To complete your registration, please visit:
+${registrationLink}
+
+Important: This link expires in 48 hours.
+
+If you have any questions, contact ${requestingUser.firstName} ${requestingUser.lastName} (${requestingUser.email}).
+
+Best regards,
+The ${requestingUser.companyName} Team
+
+This is an automated message.
+        `
+      };
+
+      const info = await transporter.sendMail(mailOptions);
+      emailSent = true;
+      emailMessageId = info.messageId;
+      
+      console.log(`✅ Registration email sent to ${email}`);
+      console.log(`📨 Message ID: ${info.messageId}`);
+      console.log(`📤 Accepted: ${info.accepted}`);
+      console.log(`❌ Rejected: ${info.rejected}`);
+
+    } catch (emailError) {
+      console.error('❌ Failed to send registration email:', emailError.message);
+      console.error('Full error:', emailError);
+      
+      // Check for specific Gmail errors
+      if (emailError.code === 'EAUTH') {
+        console.error('\n🔧 Gmail Authentication Error - Possible fixes:');
+        console.error('1. Make sure 2FA is enabled on your Google account');
+        console.error('2. Generate a new App Password at: https://myaccount.google.com/apppasswords');
+        console.error('3. Use the 16-character App Password (not your regular password)');
+        console.error('4. Check that GMAIL_USER is your full email address');
+      }
+      
+      if (emailError.code === 'EENVELOPE') {
+        console.error('\n🔧 Email Envelope Error:');
+        console.error('Check the recipient email address format');
+      }
+      
+      emailError = {
+        message: emailError.message,
+        code: emailError.code
+      };
+    }
+
+    // Return response
+    res.status(201).json({
+      success: true,
+      message: emailSent ? 
+        '✅ Employee created successfully. Registration email sent.' : 
+        '⚠️ Employee created successfully. Registration email could not be sent.',
+      code: "EMPLOYEE_CREATED",
+      data: {
+        employeeId: savedEmployee._id,
+        name: `${savedEmployee.firstName} ${savedEmployee.lastName}`,
+        email: savedEmployee.email,
+        position: savedEmployee.position,
+        status: savedEmployee.status,
+        registrationStatus: savedEmployee.registrationStatus,
+        departmentId: savedEmployee.departmentId
+      },
+      registration: {
+        emailSent,
+        messageId: emailMessageId,
+        link: registrationLink,
+        expires: new Date(registrationTokenExpires),
+        error: emailError ? {
+          message: emailError.message,
+          code: emailError.code
+        } : null
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error creating employee:', error);
+    
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({ 
+        success: false,
+        message: `An employee with this ${field} already exists`,
+        code: "DUPLICATE_EMPLOYEE_DATA"
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error while creating employee',
+      code: "SERVER_ERROR",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+
+
 
 
 

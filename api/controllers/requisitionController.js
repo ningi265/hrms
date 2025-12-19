@@ -6,6 +6,26 @@ const Department = require("../../models/departments");
 
 const sgMail = require('@sendgrid/mail');
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+const nodemailer = require('nodemailer');
+
+const createGmailTransporter = () => {
+  const gmailUser = process.env.GMAIL_USER || 'brianmtonga592@gmail.com';
+  const gmailAppPassword = process.env.GMAIL_APP_PASSWORD || 'fmcznqzyywlscpgs';
+  
+  if (!gmailUser || !gmailAppPassword) {
+    console.warn('⚠️ Gmail credentials not found. Email notifications disabled.');
+    return null;
+  }
+  
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: gmailUser,
+      pass: gmailAppPassword
+    }
+  });
+};
+
 
 
 // Submit a new requisition (Employee)
@@ -456,77 +476,258 @@ exports.getAllPendingRequisitions = async (req, res) => {
 // Approve a requisition
 exports.approveRequisition = async (req, res) => {
     console.log("Approving requisition with ID:", req.params.id);
+    
     try {
         const requisition = await Requisition.findById(req.params.id);
-        if (!requisition) return res.status(404).json({ message: "Requisition not found" });
+        if (!requisition) return res.status(404).json({ 
+            message: "Requisition not found",
+            code: "REQUISITION_NOT_FOUND"
+        });
 
         // Get approver details
         const approver = await User.findById(req.user._id);
-        if (!approver) return res.status(404).json({ message: "Approver not found" });
+        if (!approver) return res.status(404).json({ 
+            message: "Approver not found",
+            code: "APPROVER_NOT_FOUND"
+        });
 
         // Update requisition status
         requisition.status = "approved";
         requisition.approver = req.user._id;
+        requisition.approvalDate = new Date();
         await requisition.save();
+
+        console.log(`✅ Requisition ${requisition._id} approved by ${approver.firstName}`);
 
         // Get employee details
         const employee = await User.findById(requisition.employee);
-        if (!employee) return res.status(404).json({ message: "Employee not found" });
+        if (!employee) return res.status(404).json({ 
+            message: "Employee not found",
+            code: "EMPLOYEE_NOT_FOUND"
+        });
 
-        // Prepare email notification
-        const msg = {
-            to: employee.email,
-            from: {
-                name: approver.companyName || 'NexusMWI',
-                email: process.env.SENDGRID_FROM_EMAIL || 'noreply@nexusmwi.com'
-            },
-            subject: `Your Requisition Has Been Approved - ${requisition.itemName}`,
-            html: `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 5px;">
-                    <h2 style="color: #333;">Requisition Approved</h2>
-                    <p>Dear ${employee.firstName} ${employee.lastName},</p>
-                    <p>Your requisition for <strong>${requisition.itemName}</strong> has been approved by ${approver.firstName} ${approver.lastName}.</p>
-                    <p>Here are the details of your approved requisition:</p>
-                    <ul>
-                        <li><strong>Item:</strong> ${requisition.itemName}</li>
-                        <li><strong>Quantity:</strong> ${requisition.quantity}</li>
-                        <li><strong>Purpose:</strong> ${requisition.purpose}</li>
-                        <li><strong>Approval Date:</strong> ${new Date().toLocaleDateString()}</li>
-                    </ul>
-                    <p>The procurement team will now begin sourcing the product. You can track the status of your requisition through your employee portal.</p>
-                    <div style="margin: 20px 0; text-align: center;">
-                        <a href="${process.env.FRONTEND_URL}/requisitions/${requisition._id}" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">View Requisition</a>
-                    </div>
-                    <p style="font-size: 12px; color: #777;">Or copy and paste this link into your browser: ${process.env.FRONTEND_URL}/requisitions/${requisition._id}</p>
-                    <p>If you have any questions, please contact the procurement team.</p>
-                    <p>Best regards,<br/>${approver.companyName} Team</p>
+        // Prepare email notification using Gmail
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+        const requisitionUrl = `${frontendUrl}/requisitions/${requisition._id}`;
+        
+        const emailHtml = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <style>
+                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+                    .header { background-color: #4CAF50; color: white; padding: 20px; text-align: center; border-radius: 5px; }
+                    .content { padding: 20px; background-color: #f9f9f9; border-radius: 5px; margin-top: 20px; }
+                    .button { display: inline-block; padding: 12px 24px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; }
+                    .details-box { background-color: #fff; border: 1px solid #ddd; padding: 15px; border-radius: 5px; margin: 20px 0; }
+                    .footer { margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666; }
+                    .status-badge { background-color: #4CAF50; color: white; padding: 5px 10px; border-radius: 3px; font-size: 12px; font-weight: bold; }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>✅ Requisition Approved</h1>
                 </div>
-            `,
-            text: `Requisition Approved\n\nDear ${employee.firstName} ${employee.lastName},\n\nYour requisition for ${requisition.itemName} has been approved by ${approver.firstName} ${approver.lastName}.\n\nDetails:\n- Item: ${requisition.itemName}\n- Quantity: ${requisition.quantity}\n- Purpose: ${requisition.purpose}\n- Approval Date: ${new Date().toLocaleDateString()}\n\nThe procurement team will now begin sourcing the product. You can track the status of your requisition through your employee portal: ${process.env.FRONTEND_URL}/requisitions/${requisition._id}\n\nIf you have any questions, please contact the procurement team.\n\nBest regards,\n${approver.companyName} Team`
+                
+                <div class="content">
+                    <h2>Hello ${employee.firstName} ${employee.lastName},</h2>
+                    
+                    <p>Great news! Your requisition request has been approved.</p>
+                    
+                    <div class="details-box">
+                        <p><strong>Approval Details:</strong></p>
+                        <ul style="list-style: none; padding-left: 0;">
+                            <li><strong>Item Name:</strong> ${requisition.itemName}</li>
+                            <li><strong>Quantity:</strong> ${requisition.quantity}</li>
+                            <li><strong>Purpose:</strong> ${requisition.purpose || 'Not specified'}</li>
+                            <li><strong>Status:</strong> <span class="status-badge">APPROVED</span></li>
+                            <li><strong>Approved By:</strong> ${approver.firstName} ${approver.lastName}</li>
+                            <li><strong>Approval Date:</strong> ${new Date().toLocaleDateString()}</li>
+                            <li><strong>Requisition ID:</strong> ${requisition._id}</li>
+                        </ul>
+                    </div>
+                    
+                    <p>The procurement team will now begin sourcing the product. You can track the status through your employee portal.</p>
+                    
+                    <div style="text-align: center; margin: 25px 0;">
+                        <a href="${requisitionUrl}" class="button">View Requisition Details</a>
+                    </div>
+                    
+                    <div style="background-color: #f0f8ff; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                        <p><strong>📋 Next Steps:</strong></p>
+                        <ol>
+                            <li>Procurement team will source the requested item</li>
+                            <li>You'll receive updates on the procurement status</li>
+                            <li>Once procured, you'll be notified about collection/delivery</li>
+                        </ol>
+                    </div>
+                    
+                    <p>If you have any questions, please contact the procurement team or your approver.</p>
+                    
+                    <div class="footer">
+                        <p>Best regards,<br>
+                        <strong>The ${approver.companyName || 'Company'} Team</strong></p>
+                        <p><em>This is an automated notification. Please do not reply to this email.</em></p>
+                        <p>Need help? Contact: ${approver.email}</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+        `;
+
+        const emailText = `
+REQUISITION APPROVED
+
+Hello ${employee.firstName} ${employee.lastName},
+
+Great news! Your requisition request has been approved.
+
+APPROVAL DETAILS:
+─────────────────────────────────────────────────────────────
+Item Name:      ${requisition.itemName}
+Quantity:       ${requisition.quantity}
+Purpose:        ${requisition.purpose || 'Not specified'}
+Status:         APPROVED ✅
+Approved By:    ${approver.firstName} ${approver.lastName}
+Approval Date:  ${new Date().toLocaleDateString()}
+Requisition ID: ${requisition._id}
+─────────────────────────────────────────────────────────────
+
+The procurement team will now begin sourcing the product. 
+You can track the status through your employee portal.
+
+View your requisition: ${requisitionUrl}
+
+NEXT STEPS:
+1. Procurement team will source the requested item
+2. You'll receive updates on the procurement status
+3. Once procured, you'll be notified about collection/delivery
+
+If you have any questions, please contact:
+• Procurement team
+• Your approver: ${approver.email}
+
+Best regards,
+The ${approver.companyName || 'Company'} Team
+
+─────────────────────────────────────────────────────────────
+This is an automated notification. Please do not reply to this email.
+        `;
+
+        // Send email notification using Gmail
+        let emailSent = false;
+        let emailError = null;
+        let emailMessageId = null;
+
+        try {
+            const transporter = createGmailTransporter();
+            
+            if (transporter) {
+                const senderEmail = process.env.GMAIL_USER || 'brianmtonga592@gmail.com';
+                
+                const mailOptions = {
+                    from: {
+                        name: approver.companyName || 'NexusMWI',
+                        address: senderEmail
+                    },
+                    to: employee.email,
+                    subject: `✅ Approved: ${requisition.itemName} - ${approver.companyName}`,
+                    html: emailHtml,
+                    text: emailText
+                };
+
+                const info = await transporter.sendMail(mailOptions);
+                emailSent = true;
+                emailMessageId = info.messageId;
+                
+                console.log(`📧 Requisition approval email sent to ${employee.email}`);
+                console.log(`📨 Message ID: ${info.messageId}`);
+                
+            } else {
+                console.warn('⚠️ Gmail transporter not available. Email notification skipped.');
+                emailError = 'Email service not configured';
+            }
+            
+        } catch (emailErr) {
+            console.error('❌ Failed to send approval email:', emailErr.message);
+            emailError = emailErr.message;
+            
+            // Log specific Gmail errors
+            if (emailErr.code === 'EAUTH') {
+                console.error('🔧 Gmail authentication error. Check your credentials in .env file');
+            }
+        }
+
+        // Prepare response
+        const response = {
+            success: true,
+            message: "Requisition approved successfully",
+            code: "REQUISITION_APPROVED",
+            requisition: {
+                id: requisition._id,
+                itemName: requisition.itemName,
+                quantity: requisition.quantity,
+                status: requisition.status,
+                approvalDate: requisition.approvalDate,
+                approver: {
+                    id: approver._id,
+                    name: `${approver.firstName} ${approver.lastName}`,
+                    email: approver.email
+                },
+                employee: {
+                    id: employee._id,
+                    name: `${employee.firstName} ${employee.lastName}`,
+                    email: employee.email
+                }
+            },
+            notification: {
+                sent: emailSent,
+                recipient: employee.email,
+                messageId: emailMessageId,
+                error: emailError ? {
+                    message: emailError,
+                    requiresAttention: emailError.includes('authentication') || emailError.includes('credentials')
+                } : null
+            }
         };
 
-        // Send email notification
-        await sgMail.send(msg);
-        console.log(`Requisition approval email sent to ${employee.email}`);
+        // Add troubleshooting info if email failed due to auth
+        if (emailError && emailError.includes('authentication')) {
+            response.notification.troubleshooting = {
+                message: "Gmail authentication failed",
+                steps: [
+                    "1. Check GMAIL_USER and GMAIL_APP_PASSWORD in .env file",
+                    "2. Ensure 2FA is enabled on your Google account",
+                    "3. Generate a new App Password at: https://myaccount.google.com/apppasswords",
+                    "4. Use the 16-character App Password (not regular password)"
+                ]
+            };
+        }
 
-        res.json({ 
-            message: "Requisition approved and notification sent", 
-            requisition,
-            notification: {
-                sent: true,
-                recipient: employee.email,
-                item: requisition.itemName
-            }
-        });
+        res.json(response);
+
     } catch (err) {
-        console.error('Error approving requisition:', err);
+        console.error('❌ Error approving requisition:', err);
+        
+        // Handle specific errors
+        if (err.name === 'CastError') {
+            return res.status(400).json({ 
+                success: false,
+                message: "Invalid requisition ID format",
+                code: "INVALID_ID_FORMAT"
+            });
+        }
+        
         res.status(500).json({ 
-            message: "Server error", 
-            error: err.message,
-            code: "SERVER_ERROR"
+            success: false,
+            message: "Server error while approving requisition",
+            code: "SERVER_ERROR",
+            error: process.env.NODE_ENV === 'development' ? err.message : undefined
         });
     }
 };
+
 
 // Reject a requisition
 exports.rejectRequisition = async (req, res) => {
