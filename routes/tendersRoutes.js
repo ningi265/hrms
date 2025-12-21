@@ -18,11 +18,7 @@ router.post("/", protect(["procurement_officer", "admin","IT/Technical",
         "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), trackApiUsage, createTender);
 
 // Get all RFQs (Procurement Officers & Admins)
-router.get("/", protect(["procurement_officer", "admin", "Vendor","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
-        "Management",
-        "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getAllTenders);
+router.get("/",  getAllTenders);
 
 
 router.get("/company", protect(["procurement_officer", "admin", "Vendor","IT/Technical",

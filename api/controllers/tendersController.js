@@ -147,7 +147,7 @@ exports.createTender = async (req, res) => {
 
 
 
-// Get all RFQs (Procurement Officers & Admins)
+// Get all Tenders (Procurement Officers & Admins)
 exports.getAllTenders = async (req, res) => {
     try {
         const tenders = await Tenders.find()
