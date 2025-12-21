@@ -5,14 +5,13 @@ const { protect } = require('../api/middleware/authMiddleware');
 
 // Define allowed roles for workflow management
 const workflowAdminRoles = [
-    "admin",
-    "Executive (CEO, CFO, etc.)",
-    "Management",
-    "Enterprise(CEO, CFO, etc.)",
-    "HR Manager",
-    "Finance Analyst",
-    "Accountant"
+ "procurement_officer", "admin","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"
 ];
+
 
 // Apply middleware to all routes
 router.use(protect(workflowAdminRoles));

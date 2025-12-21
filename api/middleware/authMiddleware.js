@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
+const User = require('../../models/user'); 
 
-exports.protect = (roles = []) => (req, res, next) => {
+exports.protect = (roles = []) => async (req, res, next) => {
   try {
     // 1. Get token from header
     const authHeader = req.headers.authorization;
@@ -25,13 +26,30 @@ exports.protect = (roles = []) => (req, res, next) => {
       });
     }
 
-    // 4. Attach user to request
+    // 4. Fetch user from database WITH company
+    const user = await User.findById(userId)
+      .select('-password')
+      .populate('company', '_id name'); // Populate company
+
+    if (!user) {
+      return res.status(401).json({ 
+        success: false,
+        message: "User not found" 
+      });
+    }
+
+    // 5. Attach user to request WITH company
     req.user = {
-      _id: userId,
-      role: decoded.role || 'user' // Default role if not specified
+      _id: user._id,
+      id: user._id,
+      email: user.email,
+      name: user.name,
+      role: user.role || decoded.role || 'user',
+      company: user.company?._id, // Get company from populated user
+      companyName: user.company?.name
     };
 
-    // 5. Check roles if specified
+    // 6. Check roles if specified
     if (roles.length && !roles.includes(req.user.role)) {
       return res.status(403).json({ 
         success: false,

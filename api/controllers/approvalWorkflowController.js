@@ -1,8 +1,8 @@
-const mongoose = require('mongoose');
-const ApprovalWorkflow = require('../../models/approvalWorkflow.js');
-const Requisition = require('../../models/requisition.js');
-const User = require('../../models/user.js');
-const Department = require('../../models/departments.js');
+import mongoose from 'mongoose';
+import ApprovalWorkflow from '../../models/approvalWorkflow.js';
+import Requisition from '../../models/requisition.js';
+import User from '../../models/user.js';
+import Department from '../../models/departments.js';
 
 // Helper function to validate workflow nodes
 const validateWorkflowNodes = (nodes) => {
@@ -80,8 +80,11 @@ const validateWorkflowConnections = (nodes, connections) => {
 // @desc    Create new approval workflow
 // @route   POST /api/approval-workflows
 // @access  Private (Admin/Manager)
-exports.createWorkflow = async (req, res) => {
+export const createWorkflow = async (req, res) => {
   try {
+    console.log('User object:', req.user); // Debug log
+    console.log('Request body:', req.body); // Debug log
+    
     const {
       name,
       description,
@@ -93,7 +96,7 @@ exports.createWorkflow = async (req, res) => {
       minAmount = 0,
       maxAmount,
       triggerConditions = [],
-      nodes,
+      nodes = [],
       connections = [],
       slaHours = 72,
       autoApproveBelow,
@@ -103,27 +106,50 @@ exports.createWorkflow = async (req, res) => {
       allowDelegation = true,
       notifications = [],
       version = '1.0',
-      isDraft = false
+      isDraft = true,
+      company: companyFromBody, // Get from request body
+      createdBy: createdByFromBody // Get from request body
     } = req.body;
 
     // Validate required fields
-    if (!name || !nodes) {
+    if (!name) {
       return res.status(400).json({
         success: false,
-        message: 'Name and nodes are required'
+        message: 'Workflow name is required'
       });
     }
 
-    // Validate nodes and connections
-    validateWorkflowNodes(nodes);
-    validateWorkflowConnections(nodes, connections);
+    // Get company and user - PRIORITIZE request body over req.user
+    // Since req.user.company is undefined, use company from request body
+    const companyId = companyFromBody || req.user?.company;
+    const createdById = createdByFromBody || req.user?.id || req.user?._id;
 
-    // Get company from authenticated user
-    const company = req.user.company;
+    console.log('Using Company ID:', companyId); // Debug
+    console.log('Using Created By ID:', createdById); // Debug
+
+    if (!companyId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Company information is required. Please provide company ID.'
+      });
+    }
+
+    if (!createdById) {
+      return res.status(400).json({
+        success: false,
+        message: 'User information is required'
+      });
+    }
+
+    // Only validate nodes if provided (allow empty workflows initially)
+    if (nodes && nodes.length > 0) {
+      validateWorkflowNodes(nodes, isDraft);
+      validateWorkflowConnections(nodes, connections || []);
+    }
 
     // Check for duplicate workflow name in same company
     const existingWorkflow = await ApprovalWorkflow.findOne({
-      company,
+      company: companyId,
       name,
       isDraft: false
     });
@@ -136,7 +162,7 @@ exports.createWorkflow = async (req, res) => {
     }
 
     // Create workflow
-    const workflow = new ApprovalWorkflow({
+    const workflowData = {
       name,
       description,
       isActive,
@@ -147,8 +173,45 @@ exports.createWorkflow = async (req, res) => {
       minAmount,
       maxAmount,
       triggerConditions,
-      nodes,
-      connections,
+      nodes: nodes.length > 0 ? nodes : [
+        {
+          id: 'start-1',
+          type: 'start',
+          name: 'Start',
+          description: 'Workflow start point',
+          position: { x: 100, y: 100 },
+          approvers: [],
+          approvalType: 'sequential',
+          minApprovals: 1,
+          conditions: [],
+          trueBranch: '',
+          falseBranch: '',
+          timeoutHours: 24,
+          escalationTo: '',
+          isMandatory: true,
+          canDelegate: true,
+          actions: [],
+        },
+        {
+          id: 'end-1',
+          type: 'end',
+          name: 'End',
+          description: 'Workflow end point',
+          position: { x: 400, y: 100 },
+          approvers: [],
+          approvalType: 'sequential',
+          minApprovals: 1,
+          conditions: [],
+          trueBranch: '',
+          falseBranch: '',
+          timeoutHours: 24,
+          escalationTo: '',
+          isMandatory: true,
+          canDelegate: true,
+          actions: [],
+        }
+      ],
+      connections: connections.length > 0 ? connections : [],
       slaHours,
       autoApproveBelow,
       requireCFOAbove,
@@ -157,17 +220,21 @@ exports.createWorkflow = async (req, res) => {
       allowDelegation,
       notifications,
       version,
-      isDraft,
-      createdBy: req.user.id,
-      company
-    });
+      isDraft: nodes.length === 0 ? true : isDraft,
+      createdBy: createdById,
+      company: companyId
+    };
 
+    console.log('Workflow data to save:', workflowData); // Debug log
+
+    const workflow = new ApprovalWorkflow(workflowData);
     await workflow.save();
 
     // Populate references
     await workflow.populate([
       { path: 'createdBy', select: 'name email' },
-      { path: 'departments', select: 'name code' }
+      { path: 'departments', select: 'name code' },
+      { path: 'company', select: 'name' }
     ]);
 
     res.status(201).json({
@@ -176,7 +243,27 @@ exports.createWorkflow = async (req, res) => {
       message: 'Workflow created successfully'
     });
   } catch (error) {
-    console.error('Create workflow error:', error);
+    console.error('Create workflow error details:', error);
+    console.error('Error stack:', error.stack);
+    
+    // Handle specific validation errors
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: messages
+      });
+    }
+    
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Duplicate workflow name or code'
+      });
+    }
+    
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to create workflow'
@@ -187,7 +274,7 @@ exports.createWorkflow = async (req, res) => {
 // @desc    Get all approval workflows
 // @route   GET /api/approval-workflows
 // @access  Private
-exports.getWorkflows = async (req, res) => {
+export const getWorkflows = async (req, res) => {
   try {
     const {
       page = 1,
@@ -201,7 +288,27 @@ exports.getWorkflows = async (req, res) => {
       isDraft
     } = req.query;
 
-    const query = { company: req.user.company };
+    console.log('Get workflows - User:', req.user);
+    
+    // Build query - handle missing company
+    const query = {};
+    
+    // Option 1: If we have company from user, use it
+    if (req.user?.company) {
+      query.company = req.user.company;
+    } 
+    // Option 2: Find workflows created by this user
+    else if (req.user?._id) {
+      query.createdBy = req.user._id;
+      console.log('Using createdBy query:', req.user._id);
+    }
+    // Option 3: If still no query, find all (for debugging)
+    else {
+      console.log('No company or user ID, finding all workflows (debug mode)');
+      // For now, find all - but this should be restricted in production
+    }
+
+    console.log('Get workflows - Query:', JSON.stringify(query, null, 2));
 
     // Search by name or description
     if (search) {
@@ -236,6 +343,7 @@ exports.getWorkflows = async (req, res) => {
 
     // Get total count
     const total = await ApprovalWorkflow.countDocuments(query);
+    console.log('Total workflows found:', total);
 
     // Get workflows with pagination and sorting
     const workflows = await ApprovalWorkflow.find(query)
@@ -247,6 +355,9 @@ exports.getWorkflows = async (req, res) => {
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit));
+
+    console.log('Workflows retrieved:', workflows.length);
+    console.log('Workflow companies:', workflows.map(w => w.company));
 
     res.status(200).json({
       success: true,
@@ -267,10 +378,11 @@ exports.getWorkflows = async (req, res) => {
   }
 };
 
+
 // @desc    Get single approval workflow
 // @route   GET /api/approval-workflows/:id
 // @access  Private
-exports.getWorkflow = async (req, res) => {
+export const getWorkflow = async (req, res) => {
   try {
     const workflow = await ApprovalWorkflow.findOne({
       _id: req.params.id,
@@ -309,7 +421,7 @@ exports.getWorkflow = async (req, res) => {
 // @desc    Update approval workflow
 // @route   PUT /api/approval-workflows/:id
 // @access  Private (Admin/Manager)
-exports.updateWorkflow = async (req, res) => {
+export const updateWorkflow = async (req, res) => {
   try {
     const {
       name,
@@ -364,7 +476,7 @@ exports.updateWorkflow = async (req, res) => {
     }
 
     // Validate nodes if provided
-    if (nodes) {
+    if (nodes && workflow.isDraft === false) {
       validateWorkflowNodes(nodes);
       validateWorkflowConnections(nodes, connections || workflow.connections);
     }
@@ -410,7 +522,7 @@ exports.updateWorkflow = async (req, res) => {
       data: workflow,
       message: 'Workflow updated successfully'
     });
-  } catch (error) {
+ } catch (error) {
     console.error('Update workflow error:', error);
     res.status(500).json({
       success: false,
@@ -422,7 +534,7 @@ exports.updateWorkflow = async (req, res) => {
 // @desc    Delete approval workflow
 // @route   DELETE /api/approval-workflows/:id
 // @access  Private (Admin/Manager)
-exports.deleteWorkflow = async (req, res) => {
+export const deleteWorkflow = async (req, res) => {
   try {
     // Find workflow
     const workflow = await ApprovalWorkflow.findOne({
@@ -467,7 +579,7 @@ exports.deleteWorkflow = async (req, res) => {
 // @desc    Clone approval workflow
 // @route   POST /api/approval-workflows/:id/clone
 // @access  Private (Admin/Manager)
-exports.cloneWorkflow = async (req, res) => {
+export const cloneWorkflow = async (req, res) => {
   try {
     const { name: newName, description: newDescription } = req.body;
 
@@ -529,7 +641,7 @@ exports.cloneWorkflow = async (req, res) => {
 // @desc    Publish workflow (convert draft to active)
 // @route   POST /api/approval-workflows/:id/publish
 // @access  Private (Admin/Manager)
-exports.publishWorkflow = async (req, res) => {
+export const publishWorkflow = async (req, res) => {
   try {
     const workflow = await ApprovalWorkflow.findOne({
       _id: req.params.id,
@@ -598,7 +710,7 @@ exports.publishWorkflow = async (req, res) => {
 // @desc    Get applicable workflow for requisition
 // @route   GET /api/approval-workflows/applicable
 // @access  Private
-exports.getApplicableWorkflow = async (req, res) => {
+export const getApplicableWorkflow = async (req, res) => {
   try {
     const { departmentId, category, estimatedCost, departmentCode, urgency, isCustomItem } = req.query;
 
@@ -642,7 +754,7 @@ exports.getApplicableWorkflow = async (req, res) => {
 // @desc    Test workflow with sample data
 // @route   POST /api/approval-workflows/:id/test
 // @access  Private (Admin/Manager)
-exports.testWorkflow = async (req, res) => {
+export const testWorkflow = async (req, res) => {
   try {
     const { testData } = req.body;
 
@@ -713,7 +825,7 @@ exports.testWorkflow = async (req, res) => {
 // @desc    Get workflow statistics
 // @route   GET /api/approval-workflows/:id/statistics
 // @access  Private
-exports.getWorkflowStatistics = async (req, res) => {
+export const getWorkflowStatistics = async (req, res) => {
   try {
     const workflow = await ApprovalWorkflow.findOne({
       _id: req.params.id,
@@ -847,7 +959,7 @@ exports.getWorkflowStatistics = async (req, res) => {
 // @desc    Get workflow templates
 // @route   GET /api/approval-workflows/templates
 // @access  Private
-exports.getWorkflowTemplates = async (req, res) => {
+export const getWorkflowTemplates = async (req, res) => {
   try {
     const templates = [
       {
@@ -1021,6 +1133,3 @@ exports.getWorkflowTemplates = async (req, res) => {
     });
   }
 };
-
-// Export all functions
-module.exports = exports;
