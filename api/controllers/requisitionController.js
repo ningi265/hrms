@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const Requisition = require("../../models/requisition");
-//const {sendNotifications} = require("../services/notificationService");
+const ApprovalWorkflow = require("../../models/approvalWorkflow"); 
 const User = require("../../models/user");
 const Department = require("../../models/departments");
 
@@ -26,7 +26,374 @@ const createGmailTransporter = () => {
   });
 };
 
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
 
+// Helper function to assign workflow to requisition
+const assignWorkflowToRequisition = async (requisition) => {
+    try {
+        // Find applicable workflow
+        const workflow = await ApprovalWorkflow.findApplicableWorkflow(
+            requisition,
+            requisition.company
+        );
+
+        if (workflow) {
+            requisition.workflow = workflow._id;
+            requisition.workflowInstanceId = `${workflow.code}-${Date.now()}`;
+            
+            // Set SLA dates
+            if (workflow.slaHours) {
+                requisition.slaStartDate = new Date();
+                requisition.slaDueDate = new Date(Date.now() + workflow.slaHours * 60 * 60 * 1000);
+            }
+
+            // Check for auto-approval
+            if (workflow.autoApproveBelow && requisition.estimatedCost <= workflow.autoApproveBelow) {
+                requisition.status = "auto-approved";
+                requisition.autoApproved = true;
+                requisition.autoApproveReason = `Auto-approved: Cost below ${workflow.autoApproveBelow} threshold`;
+            } else {
+                // Initialize workflow
+                await initializeWorkflowSteps(requisition, workflow);
+                requisition.status = "in-review";
+            }
+        } else {
+            console.warn(`No workflow found for requisition: ${requisition._id}`);
+        }
+
+        return requisition;
+    } catch (error) {
+        console.error("Error assigning workflow:", error);
+        throw error;
+    }
+};
+
+// Helper function to initialize workflow steps
+const initializeWorkflowSteps = async (requisition, workflow) => {
+    const startNode = workflow.nodes.find(node => node.type === 'start');
+    if (!startNode) {
+        throw new Error('Workflow must have a start node');
+    }
+
+    // Find next node after start
+    const connection = workflow.connections.find(conn => conn.from === startNode.id);
+    if (!connection) {
+        throw new Error('Start node must have a connection');
+    }
+
+    const firstNode = workflow.nodes.find(node => node.id === connection.to);
+    if (!firstNode) {
+        throw new Error('Invalid workflow: Could not find first node');
+    }
+
+    // Initialize current approval step
+    requisition.currentApprovalStep = {
+        nodeId: firstNode.id,
+        nodeName: firstNode.name,
+        nodeType: firstNode.type,
+        status: "pending",
+        startedAt: new Date(),
+        approvers: firstNode.approvers ? firstNode.approvers.map(approver => ({
+            userId: approver.userId,
+            name: approver.name,
+            email: approver.email,
+            status: "pending"
+        })) : [],
+        minApprovalsRequired: firstNode.minApprovals || 1,
+        approvalsReceived: 0,
+        rejectionsReceived: 0
+    };
+
+    // Set timeout if configured
+    if (firstNode.timeoutHours) {
+        const timeoutAt = new Date();
+        timeoutAt.setHours(timeoutAt.getHours() + firstNode.timeoutHours);
+        requisition.currentApprovalStep.timeoutAt = timeoutAt;
+    }
+
+    // Add to timeline
+    requisition.addToTimeline(
+        1,
+        "workflow_started",
+        { _id: requisition.employee, firstName: "System", lastName: "" },
+        firstNode.id,
+        firstNode.name,
+        { workflowName: workflow.name }
+    );
+};
+
+// Helper function to check and process step completion
+const checkAndProcessStepCompletion = async (requisition) => {
+    const step = requisition.currentApprovalStep;
+    
+    if (!step) return;
+
+    // Check if step requirements are met
+    const approvalsMet = step.approvalsReceived >= step.minApprovalsRequired;
+    const rejectionsReceived = step.rejectionsReceived > 0;
+    const allResponded = step.approvers.every(a => 
+        a.status === "approved" || a.status === "rejected" || a.status === "delegated"
+    );
+
+    if (rejectionsReceived) {
+        // Step rejected
+        step.status = "completed";
+        step.completedAt = new Date();
+        step.outcome = "rejected";
+        
+        // Save step to approvalSteps
+        if (!requisition.approvalSteps) requisition.approvalSteps = [];
+        requisition.approvalSteps.push({
+            ...step.toObject(),
+            stepNumber: requisition.approvalSteps.length + 1
+        });
+        
+        // Update requisition status
+        requisition.status = "rejected";
+        requisition.rejectedAt = new Date();
+        
+        // Add to history
+        requisition.addHistory(
+            "step_rejected",
+            { _id: null, firstName: "System", lastName: "" },
+            `Step rejected: ${step.nodeName}`
+        );
+        
+        return;
+    }
+
+    if (approvalsMet || (allResponded && step.approvalsReceived > 0)) {
+        // Step completed successfully
+        step.status = "completed";
+        step.completedAt = new Date();
+        step.outcome = "approved";
+        
+        // Save step to approvalSteps
+        if (!requisition.approvalSteps) requisition.approvalSteps = [];
+        requisition.approvalSteps.push({
+            ...step.toObject(),
+            stepNumber: requisition.approvalSteps.length + 1
+        });
+
+        // Get next step from workflow
+        await processNextWorkflowStep(requisition);
+    }
+};
+
+// Helper function to process next workflow step
+const processNextWorkflowStep = async (requisition) => {
+    const workflow = await ApprovalWorkflow.findById(requisition.workflow);
+    if (!workflow) {
+        console.error("Workflow not found for requisition:", requisition._id);
+        return;
+    }
+
+    const currentStep = requisition.currentApprovalStep;
+    
+    // Find connection from current node
+    const connection = workflow.connections.find(conn => conn.from === currentStep.nodeId);
+    if (!connection) {
+        // No more steps - requisition is fully approved
+        requisition.status = "approved";
+        requisition.approvedAt = new Date();
+        requisition.currentApprovalStep = null;
+        
+        requisition.addHistory(
+            "fully_approved",
+            { _id: null, firstName: "System", lastName: "" },
+            "All workflow steps completed"
+        );
+        return;
+    }
+
+    // Find next node
+    const nextNode = workflow.nodes.find(node => node.id === connection.to);
+    if (!nextNode) {
+        console.error("Next node not found in workflow");
+        return;
+    }
+
+    // Handle different node types
+    if (nextNode.type === "condition") {
+        // Evaluate condition
+        const conditionMet = workflow.evaluateConditions(nextNode.conditions, requisition);
+        const nextNodeId = conditionMet ? nextNode.trueBranch : nextNode.falseBranch;
+        const actualNextNode = workflow.nodes.find(node => node.id === nextNodeId);
+        
+        if (actualNextNode) {
+            await initializeNextStep(requisition, actualNextNode, workflow);
+        }
+    } else if (nextNode.type === "end") {
+        // End of workflow
+        requisition.status = "approved";
+        requisition.approvedAt = new Date();
+        requisition.currentApprovalStep = null;
+        
+        requisition.addHistory(
+            "workflow_completed",
+            { _id: null, firstName: "System", lastName: "" },
+            "Workflow completed successfully"
+        );
+    } else {
+        // Regular node (approval, parallel, notification)
+        await initializeNextStep(requisition, nextNode, workflow);
+    }
+};
+
+// Helper function to initialize next step
+const initializeNextStep = async (requisition, node, workflow) => {
+    requisition.currentApprovalStep = {
+        nodeId: node.id,
+        nodeName: node.name,
+        nodeType: node.type,
+        status: "pending",
+        startedAt: new Date(),
+        approvers: node.approvers ? node.approvers.map(approver => ({
+            userId: approver.userId,
+            name: approver.name,
+            email: approver.email,
+            status: "pending"
+        })) : [],
+        minApprovalsRequired: node.minApprovals || 1,
+        approvalsReceived: 0,
+        rejectionsReceived: 0
+    };
+
+    // Set timeout if configured
+    if (node.timeoutHours) {
+        const timeoutAt = new Date();
+        timeoutAt.setHours(timeoutAt.getHours() + node.timeoutHours);
+        requisition.currentApprovalStep.timeoutAt = timeoutAt;
+    }
+
+    // Add to timeline
+    requisition.addToTimeline(
+        requisition.approvalSteps ? requisition.approvalSteps.length + 2 : 1,
+        "step_started",
+        { _id: null, firstName: "System", lastName: "" },
+        node.id,
+        node.name,
+        { stepType: node.type }
+    );
+
+    // Send notifications for new step
+    if (node.type === "approval" || node.type === "parallel") {
+        await sendApprovalNotifications(requisition);
+    }
+};
+
+// Helper function to handle delegation
+const handleDelegation = async (requisition, approverId, delegateToId, comments, res) => {
+    try {
+        // Check if delegation is allowed
+        const approverIndex = requisition.currentApprovalStep.approvers
+            .findIndex(a => a.userId && a.userId.equals(approverId));
+
+        if (approverIndex === -1) {
+            return res.status(400).json({
+                success: false,
+                message: "Approver not found"
+            });
+        }
+
+        // Find delegate user
+        const delegateUser = await User.findById(delegateToId);
+        if (!delegateUser) {
+            return res.status(404).json({
+                success: false,
+                message: "Delegate user not found"
+            });
+        }
+
+        // Update approver status
+        requisition.currentApprovalStep.approvers[approverIndex].status = "delegated";
+        requisition.currentApprovalStep.approvers[approverIndex].delegatedTo = delegateUser._id;
+        requisition.currentApprovalStep.approvers[approverIndex].comments = comments;
+
+        // Add delegate as new approver
+        requisition.currentApprovalStep.approvers.push({
+            userId: delegateUser._id,
+            name: `${delegateUser.firstName} ${delegateUser.lastName}`,
+            email: delegateUser.email,
+            status: "pending",
+            isDelegated: true,
+            delegatedFrom: approverId
+        });
+
+        // Add to history
+        requisition.addHistory(
+            "delegated",
+            req.user,
+            `Delegated approval to ${delegateUser.firstName} ${delegateUser.lastName}`,
+            { delegateTo: delegateUser._id, comments }
+        );
+
+        await requisition.save();
+
+        // Send notification to delegate
+        await sendDelegationNotification(requisition, req.user, delegateUser);
+
+        res.status(200).json({
+            success: true,
+            message: "Approval delegated successfully",
+            data: {
+                delegatedTo: {
+                    id: delegateUser._id,
+                    name: `${delegateUser.firstName} ${delegateUser.lastName}`,
+                    email: delegateUser.email
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('Error handling delegation:', error);
+        res.status(500).json({
+            success: false,
+            message: "Error processing delegation",
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+};
+
+// Helper function to send approval notifications
+const sendApprovalNotifications = async (requisition) => {
+    try {
+        const step = requisition.currentApprovalStep;
+        if (!step || !step.approvers) return;
+
+        const pendingApprovers = step.approvers.filter(a => a.status === "pending");
+        
+        for (const approver of pendingApprovers) {
+            console.log(`Sending approval notification to: ${approver.email}`);
+        }
+    } catch (error) {
+        console.error('Error sending approval notifications:', error);
+    }
+};
+
+// Helper function to send requisition notification
+async function sendRequisitionNotification({ requisitionId, action, actor }) {
+    try {
+        console.log(`Notification: Requisition ${requisitionId} ${action} by ${actor}`);
+    } catch (error) {
+        console.error("Error sending requisition notification:", error);
+    }
+}
+
+// Helper function to send delegation notification
+const sendDelegationNotification = async (requisition, delegator, delegate) => {
+    try {
+        console.log(`Delegation notification: ${delegator.firstName} delegated approval to ${delegate.firstName}`);
+    } catch (error) {
+        console.error('Error sending delegation notification:', error);
+    }
+};
+
+// ============================================
+// CONTROLLER FUNCTIONS
+// ============================================
 
 // Submit a new requisition (Employee)
 exports.createRequisition = async (req, res) => {
@@ -57,31 +424,31 @@ exports.createRequisition = async (req, res) => {
             "Executive (CEO, CFO, etc.)", "Management",
             "Human Resources", "Accounting/Finance", 
             "Sales/Marketing", "Enterprise(CEO, CFO, etc.)","Software Engineer",
-    "Senior Software Engineer", 
-    "Lead Engineer",
-    "Product Manager",
-    "Senior Product Manager",
-    "Data Scientist",
-    "Data Analyst",
-    "UI/UX Designer",
-    "Senior Designer",
-    "DevOps Engineer",
-    "Quality Assurance Engineer",
-    "Business Analyst",
-    "Project Manager",
-    "Scrum Master",
-    "Sales Representative",
-    "Sales Manager",
-    "Marketing Specialist",
-    "Marketing Manager",
-    "HR Specialist",
-    "HR Manager",
-    "Finance Analyst",
-    "Accountant",
-    "Administrative Assistant",
-    "Office Manager",
-    "Customer Support Representative",
-    "Customer Success Manager"
+            "Senior Software Engineer", 
+            "Lead Engineer",
+            "Product Manager",
+            "Senior Product Manager",
+            "Data Scientist",
+            "Data Analyst",
+            "UI/UX Designer",
+            "Senior Designer",
+            "DevOps Engineer",
+            "Quality Assurance Engineer",
+            "Business Analyst",
+            "Project Manager",
+            "Scrum Master",
+            "Sales Representative",
+            "Sales Manager",
+            "Marketing Specialist",
+            "Marketing Manager",
+            "HR Specialist",
+            "HR Manager",
+            "Finance Analyst",
+            "Accountant",
+            "Administrative Assistant",
+            "Office Manager",
+            "Customer Support Representative",
+            "Customer Success Manager"
         ];
 
         // Verify user has permission to create requisitions
@@ -105,8 +472,8 @@ exports.createRequisition = async (req, res) => {
             category,
             estimatedCost,
             deliveryDate,
-            department, // This can be either ID or name
-            departmentId, // Alternative way to specify department
+            department,
+            departmentId,
             environmentalImpact,
             projectCode,
             costCenter
@@ -199,10 +566,11 @@ exports.createRequisition = async (req, res) => {
         }
 
         // Create requisition
-        const newRequisition = await Requisition.create({
+        const newRequisition = new Requisition({
             employee: req.user._id,
             company: requestingUser.company,
-            department: departmentDoc._id, // Use the found department's ID
+            department: departmentDoc._id,
+            departmentCode: departmentDoc.code || departmentDoc.departmentCode,
             itemName,
             quantity: numericQuantity,
             budgetCode,
@@ -216,49 +584,80 @@ exports.createRequisition = async (req, res) => {
             projectCode: projectCode || null,
             costCenter: costCenter || null,
             status: "pending",
-            approvalWorkflow: [], // Will be populated by workflow engine
-            history: [{
-                action: "created",
-                performedBy: req.user._id,
-                date: new Date(),
-                notes: "Requisition created"
-            }]
+            submittedAt: new Date()
         });
 
-        // Populate the response with detailed information
+        // Add history
+        newRequisition.addHistory(
+            "created",
+            req.user,
+            "Requisition created and submitted for approval"
+        );
+
+        // Save requisition
+        await newRequisition.save();
+
+        // Assign and initialize workflow
+        await assignWorkflowToRequisition(newRequisition);
+        
+        // If auto-approved, update history
+        if (newRequisition.status === "auto-approved") {
+            newRequisition.addHistory(
+                "auto_approved",
+                { _id: null, firstName: "System", lastName: "" },
+                newRequisition.autoApproveReason
+            );
+        }
+
+        await newRequisition.save();
+
+        // Populate the response
         const populatedRequisition = await Requisition.findById(newRequisition._id)
-            .populate({
-                path: 'employee',
-                select: 'firstName lastName email phoneNumber position',
-                populate: {
+            .populate([
+                {
+                    path: 'employee',
+                    select: 'firstName lastName email phoneNumber position',
+                    populate: {
+                        path: 'department',
+                        select: 'name departmentCode'
+                    }
+                },
+                {
                     path: 'department',
                     select: 'name departmentCode'
+                },
+                {
+                    path: 'company',
+                    select: 'name industry'
+                },
+                {
+                    path: 'workflow',
+                    select: 'name code version'
                 }
-            })
-            .populate({
-                path: 'department',
-                select: 'name departmentCode'
-            })
-            .populate({
-                path: 'company',
-                select: 'name industry'
-            });
+            ]);
 
-        // Trigger workflow notification
+        // Send notifications
         await sendRequisitionNotification({
             requisitionId: newRequisition._id,
             action: "created",
             actor: req.user._id
         });
 
+        // Send approval notifications if in-review
+        if (newRequisition.status === "in-review") {
+            await sendApprovalNotifications(newRequisition);
+        }
+
         res.status(201).json({ 
             success: true,
-            message: "Requisition submitted successfully", 
+            message: newRequisition.status === "auto-approved" 
+                ? "Requisition submitted and auto-approved" 
+                : "Requisition submitted successfully",
             data: populatedRequisition,
-            meta: {
-                company: requestingUser.company,
-                createdBy: req.user._id,
-                timestamp: new Date()
+            workflowStatus: {
+                hasWorkflow: !!newRequisition.workflow,
+                status: newRequisition.status,
+                currentStep: newRequisition.currentApprovalStep
             }
         });
 
@@ -293,15 +692,6 @@ exports.createRequisition = async (req, res) => {
     }
 };
 
-// Helper function to send notifications
-async function sendRequisitionNotification({ requisitionId, action, actor }) {
-    try {
-        // Implementation would depend on your notification system
-        console.log(`Notification: Requisition ${requisitionId} ${action} by ${actor}`);
-    } catch (error) {
-        console.error("Error sending requisition notification:", error);
-    }
-}
 // Get all requisitions (For Procurement Officers & Admins)
 exports.getAllRequisitions = async (req, res) => {
     try {
@@ -312,6 +702,7 @@ exports.getAllRequisitions = async (req, res) => {
     }
 };
 
+// Get all approved requisitions
 exports.getAllApprovedRequisitions = async (req, res) => {
   try {
     // Get the requesting user's company
@@ -391,7 +782,7 @@ exports.getAllApprovedRequisitions = async (req, res) => {
   }
 };
 
-//pending
+// Get all pending requisitions
 exports.getAllPendingRequisitions = async (req, res) => {
   try {
     // Get the requesting user's company
@@ -471,9 +862,7 @@ exports.getAllPendingRequisitions = async (req, res) => {
   }
 };
 
-
-
-// Approve a requisition
+// Approve a requisition (legacy - without workflow)
 exports.approveRequisition = async (req, res) => {
     console.log("Approving requisition with ID:", req.params.id);
     
@@ -728,8 +1117,7 @@ This is an automated notification. Please do not reply to this email.
     }
 };
 
-
-// Reject a requisition
+// Reject a requisition (legacy - without workflow)
 exports.rejectRequisition = async (req, res) => {
     try {
         const requisition = await Requisition.findById(req.params.id);
@@ -741,7 +1129,7 @@ exports.rejectRequisition = async (req, res) => {
 
         // Notify the employee
         const message = `Your requisition for ${requisition.itemName} has been rejected.`;
-        await sendNotifications(requisition.employee, "Requisition Rejected", message);
+        // await sendNotifications(requisition.employee, "Requisition Rejected", message);
 
         res.json({ message: "Requisition rejected and notification sent", requisition });
     } catch (err) {
@@ -762,7 +1150,8 @@ exports.getMyRequisitions = async (req, res) => {
         res.status(500).json({ message: "Server error", error: err.message });
     }
 };
-// Get all approved requisitions
+
+// Get all approved requisitions (legacy)
 exports.getApprovedRequisitions = async (req, res) => {
     try {
         const requisitions = await Requisition.find({ status: "approved" }).populate("employee", "name email");
@@ -772,7 +1161,7 @@ exports.getApprovedRequisitions = async (req, res) => {
     }
 };
 
-// Get all rejected requisitions
+// Get all rejected requisitions (legacy)
 exports.getRejectedRequisitions = async (req, res) => {
     try {
         const requisitions = await Requisition.find({ status: "rejected" }).populate("employee", "name email");
@@ -782,8 +1171,8 @@ exports.getRejectedRequisitions = async (req, res) => {
     }
 };
 
-// Get all pending requisitions
-exports.getAllPendingRequisitions = async (req, res) => {
+// Get all pending requisitions (legacy)
+exports.getPendingRequisitions = async (req, res) => {
     try {
         const requisitions = await Requisition.find({status:"pending"}).populate("employee", "firstName lastName email");
         res.json(requisitions);
@@ -792,381 +1181,101 @@ exports.getAllPendingRequisitions = async (req, res) => {
     }
 };
 
-// Get requisition stats (total, pending, approved, rejected)
-
-{/*exports.getRequisitionStats = async (req, res) => {
-    try {
-        const total = await Requisition.countDocuments();
-        const pending = await Requisition.countDocuments({ status: "pending" });
-        const approved = await Requisition.countDocuments({ status: "approved" });
-        const rejected = await Requisition.countDocuments({ status: "rejected" });
-        const requisitions = await Requisition.find({ status: "pending" })
-            .populate("employee", "name email");
-
-        const stats = {
-            counts: {
-                total,
-                pending,
-                approved,
-                rejected
-            },
-            pendingRequisitions: requisitions // Include the full requisitions data
-        };
-
-        res.json(stats); // Send a single response with all data
-    } catch (err) {
-        res.status(500).json({ message: "Server error", error: err.message });
-    }
-}; */}
+// Get requisition stats
 exports.getRequisitionStats = async (req, res) => {
     try {
         // Get the requesting user's company
-        const user = await User.findById(req.user._id).select('company isEnterpriseAdmin');
-        if (!user) {
-            return res.status(404).json({ message: "User not found" });
+        const requestingUser = await User.findById(req.user._id).select('company isEnterpriseAdmin');
+        if (!requestingUser) {
+          return res.status(404).json({ 
+            success: false,
+            message: "User not found" 
+          });
         }
-
+    
         // Base query - filter by company unless user is enterprise admin with special privileges
-        const baseQuery = user.isEnterpriseAdmin && req.query.allCompanies ? {} : { company: user.company };
-
-        // Get counts by status
-        const [total, pending, approved, rejected, processing, completed] = await Promise.all([
-            Requisition.countDocuments(baseQuery),
-            Requisition.countDocuments({ ...baseQuery, status: "pending" }),
-            Requisition.countDocuments({ ...baseQuery, status: "approved" }),
-            Requisition.countDocuments({ ...baseQuery, status: "rejected" }),
-            Requisition.countDocuments({ ...baseQuery, status: "processing" }),
-            Requisition.countDocuments({ ...baseQuery, status: "completed" })
+        const companyQuery = requestingUser.isEnterpriseAdmin && req.query.allCompanies ? {} : { company: requestingUser.company };
+    
+        // Get counts with company filtering
+        const [total, pending, approved, rejected] = await Promise.all([
+          Requisition.countDocuments(companyQuery),
+          Requisition.countDocuments({ ...companyQuery, status: "pending" }),
+          Requisition.countDocuments({ ...companyQuery, status: "approved" }),
+          Requisition.countDocuments({ ...companyQuery, status: "rejected" })
         ]);
-
-        // Get pending requisitions with employee details
-        const pendingRequisitions = await Requisition.find({ ...baseQuery, status: "pending" })
-            .populate({
-                path: "employee",
-                select: "firstName lastName email department position",
-                populate: {
-                    path: "department",
-                    select: "name"
-                }
-            })
-            .sort({ createdAt: -1 })
-            .limit(10); // Limit to 10 most recent pending requisitions
-
-        // Get recent activity (last 30 days)
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-        const recentActivity = await Requisition.aggregate([
-            { $match: { ...baseQuery, createdAt: { $gte: thirtyDaysAgo } } },
-            { $group: { 
-                _id: { 
-                    $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } 
-                },
-                count: { $sum: 1 },
-                approved: { 
-                    $sum: { $cond: [{ $eq: ["$status", "approved"] }, 1, 0] } 
-                },
-                rejected: { 
-                    $sum: { $cond: [{ $eq: ["$status", "rejected"] }, 1, 0] } 
-                }
-            }},
-            { $sort: { _id: 1 } },
-            { $project: { 
-                date: "$_id", 
-                count: 1, 
-                approved: 1, 
-                rejected: 1,
-                _id: 0 
-            }}
-        ]);
-
-        // Get department-wise breakdown
-        const departmentStats = await Requisition.aggregate([
-            { $match: baseQuery },
-            { $lookup: {
-                from: "users",
-                localField: "employee",
-                foreignField: "_id",
-                as: "employeeData"
-            }},
-            { $unwind: "$employeeData" },
-            { $group: {
-                _id: "$employeeData.department",
-                total: { $sum: 1 },
-                pending: { 
-                    $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } 
-                },
-                approved: { 
-                    $sum: { $cond: [{ $eq: ["$status", "approved"] }, 1, 0] } 
-                },
-                rejected: { 
-                    $sum: { $cond: [{ $eq: ["$status", "rejected"] }, 1, 0] } 
-                }
-            }},
-            { $lookup: {
-                from: "departments",
-                localField: "_id",
-                foreignField: "_id",
-                as: "departmentData"
-            }},
-            { $unwind: "$departmentData" },
-            { $project: {
-                department: "$departmentData.name",
-                total: 1,
-                pending: 1,
-                approved: 1,
-                rejected: 1,
-                approvalRate: {
-                    $cond: [
-                        { $eq: ["$total", 0] },
-                        0,
-                        { $divide: ["$approved", "$total"] }
-                    ]
-                }
-            }},
-            { $sort: { total: -1 } }
-        ]);
-
-        // Calculate approval rate
-        const approvalRate = total > 0 ? (approved / total) * 100 : 0;
-        const rejectionRate = total > 0 ? (rejected / total) * 100 : 0;
-
-        // Prepare response
-        const stats = {
-            summary: {
-                total,
-                pending,
-                approved,
-                rejected,
-                processing,
-                completed,
-                approvalRate: parseFloat(approvalRate.toFixed(2)),
-                rejectionRate: parseFloat(rejectionRate.toFixed(2)),
-                avgProcessingTime: "N/A" // Could be implemented with actual data
-            },
-            recentActivity,
-            departmentStats,
-            pendingRequisitions,
-            context: {
-                company: user.company,
-                isEnterpriseAdmin: user.isEnterpriseAdmin,
-                allCompanies: req.query.allCompanies ? true : false
+    
+        // Get pending requisitions with populated data and company filtering
+        const pendingRequisitions = await Requisition.find({ ...companyQuery, status: "pending" })
+          .populate({
+            path: 'employee',
+            select: 'firstName lastName email',
+            populate: {
+              path: 'department',
+              select: 'name departmentCode'
             }
+          })
+          .populate({
+            path: 'department',
+            select: 'name departmentCode'
+          })
+          .populate({
+            path: 'company',
+            select: 'name logo'
+          })
+          .limit(10) // Limit to 10 most recent pending requisitions
+          .sort({ createdAt: -1 }) // Sort by newest first
+          .lean();
+    
+        // Calculate urgency distribution
+        const urgencyStats = await Requisition.aggregate([
+          { $match: { ...companyQuery, status: "pending" } },
+          {
+            $group: {
+              _id: "$urgency",
+              count: { $sum: 1 }
+            }
+          }
+        ]);
+    
+        // Format urgency stats
+        const urgencyDistribution = {
+          high: urgencyStats.find(stat => stat._id === "high")?.count || 0,
+          medium: urgencyStats.find(stat => stat._id === "medium")?.count || 0,
+          low: urgencyStats.find(stat => stat._id === "low")?.count || 0
         };
-
-        res.json(stats);
-    } catch (err) {
-        console.error("Error in getRequisitionStats:", err);
-        res.status(500).json({ 
-            message: "Server error", 
-            error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    
+        res.status(200).json({
+          success: true,
+          data: {
+            counts: {
+              total,
+              pending,
+              approved,
+              rejected
+            },
+            urgencyDistribution,
+            recentPending: pendingRequisitions,
+            meta: {
+              context: {
+                company: requestingUser.company,
+                isEnterpriseAdmin: requestingUser.isEnterpriseAdmin,
+                allCompanies: req.query.allCompanies ? true : false
+              }
+            }
+          }
         });
-    }
+    
+      } catch (error) {
+        console.error('Error fetching requisition stats:', error);
+        res.status(500).json({ 
+          success: false,
+          message: 'Server error while fetching requisition statistics',
+          error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+      }
 };
 
-
-exports.getRequisitionStats = async (req, res) => {
-  try {
-    // Get the requesting user's company
-    const requestingUser = await User.findById(req.user._id).select('company isEnterpriseAdmin');
-    if (!requestingUser) {
-      return res.status(404).json({ 
-        success: false,
-        message: "User not found" 
-      });
-    }
-
-    // Base query - filter by company unless user is enterprise admin with special privileges
-    const companyQuery = requestingUser.isEnterpriseAdmin && req.query.allCompanies ? {} : { company: requestingUser.company };
-
-    // Get counts with company filtering
-    const [total, pending, approved, rejected] = await Promise.all([
-      Requisition.countDocuments(companyQuery),
-      Requisition.countDocuments({ ...companyQuery, status: "pending" }),
-      Requisition.countDocuments({ ...companyQuery, status: "approved" }),
-      Requisition.countDocuments({ ...companyQuery, status: "rejected" })
-    ]);
-
-    // Get pending requisitions with populated data and company filtering
-    const pendingRequisitions = await Requisition.find({ ...companyQuery, status: "pending" })
-      .populate({
-        path: 'employee',
-        select: 'firstName lastName email',
-        populate: {
-          path: 'department',
-          select: 'name departmentCode'
-        }
-      })
-      .populate({
-        path: 'department',
-        select: 'name departmentCode'
-      })
-      .populate({
-        path: 'company',
-        select: 'name logo'
-      })
-      .limit(10) // Limit to 10 most recent pending requisitions
-      .sort({ createdAt: -1 }) // Sort by newest first
-      .lean();
-
-    // Calculate urgency distribution
-    const urgencyStats = await Requisition.aggregate([
-      { $match: { ...companyQuery, status: "pending" } },
-      {
-        $group: {
-          _id: "$urgency",
-          count: { $sum: 1 }
-        }
-      }
-    ]);
-
-    // Format urgency stats
-    const urgencyDistribution = {
-      high: urgencyStats.find(stat => stat._id === "high")?.count || 0,
-      medium: urgencyStats.find(stat => stat._id === "medium")?.count || 0,
-      low: urgencyStats.find(stat => stat._id === "low")?.count || 0
-    };
-
-    res.status(200).json({
-      success: true,
-      data: {
-        counts: {
-          total,
-          pending,
-          approved,
-          rejected
-        },
-        urgencyDistribution,
-        recentPending: pendingRequisitions,
-        meta: {
-          context: {
-            company: requestingUser.company,
-            isEnterpriseAdmin: requestingUser.isEnterpriseAdmin,
-            allCompanies: req.query.allCompanies ? true : false
-          }
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('Error fetching requisition stats:', error);
-    res.status(500).json({ 
-      success: false,
-      message: 'Server error while fetching requisition statistics',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-// Get all pending requisitions (For Procurement Officers & Admins)
-exports.getPendingRequisitions = async (req, res) => {
-  try {
-    // Get the requesting user's company
-    const requestingUser = await User.findById(req.user._id).select('company isEnterpriseAdmin');
-    if (!requestingUser) {
-      return res.status(404).json({ 
-        success: false,
-        message: "User not found" 
-      });
-    }
-
-    // Base query - filter by company unless user is enterprise admin with special privileges
-    const statusQuery = { status: "pending" };
-    const companyQuery = requestingUser.isEnterpriseAdmin && req.query.allCompanies ? {} : { company: requestingUser.company };
-    const baseQuery = { ...statusQuery, ...companyQuery };
-
-    // Get pagination parameters
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = (page - 1) * limit;
-
-    // Get sorting parameters
-    const sortField = req.query.sortBy || 'createdAt';
-    const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
-    const sort = { [sortField]: sortOrder };
-
-    // Get pending requisitions with populated data
-    const requisitions = await Requisition.find(baseQuery)
-      .populate({
-        path: 'employee',
-        select: 'firstName lastName email position avatar',
-        populate: {
-          path: 'department',
-          select: 'name departmentCode'
-        }
-      })
-      .populate({
-        path: 'department',
-        select: 'name departmentCode'
-      })
-      .populate({
-        path: 'company',
-        select: 'name logo'
-      })
-      .populate({
-        path: 'approver',
-        select: 'firstName lastName email'
-      })
-      .sort(sort)
-      .skip(skip)
-      .limit(limit)
-      .lean();
-
-    // Get total count for pagination
-    const totalCount = await Requisition.countDocuments(baseQuery);
-
-    // Calculate summary statistics
-    const stats = await Requisition.aggregate([
-      { $match: baseQuery },
-      {
-        $group: {
-          _id: null,
-          totalRequisitions: { $sum: 1 },
-          totalEstimatedCost: { $sum: "$estimatedCost" },
-          avgEstimatedCost: { $avg: "$estimatedCost" },
-          earliestDate: { $min: "$createdAt" },
-          latestDate: { $max: "$createdAt" },
-          highUrgencyCount: { 
-            $sum: { $cond: [{ $eq: ["$urgency", "high"] }, 1, 0] } 
-          },
-          mediumUrgencyCount: { 
-            $sum: { $cond: [{ $eq: ["$urgency", "medium"] }, 1, 0] } 
-          },
-          lowUrgencyCount: { 
-            $sum: { $cond: [{ $eq: ["$urgency", "low"] }, 1, 0] } 
-          }
-        }
-      }
-    ]);
-
-    res.status(200).json({
-      success: true,
-      data: requisitions,
-      meta: {
-        total: totalCount,
-        page,
-        limit,
-        totalPages: Math.ceil(totalCount / limit),
-        sort: `${sortField}:${sortOrder === 1 ? 'asc' : 'desc'}`,
-        stats: stats[0] || {},
-        context: {
-          company: requestingUser.company,
-          isEnterpriseAdmin: requestingUser.isEnterpriseAdmin,
-          allCompanies: req.query.allCompanies ? true : false
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('Error fetching pending requisitions:', error);
-    res.status(500).json({ 
-      success: false,
-      message: 'Server error while fetching pending requisitions',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
+// Travel requisition
 exports.travelRequisition = async (req, res) => {
     try {
         console.log(req.body);
@@ -1186,3 +1295,355 @@ exports.travelRequisition = async (req, res) => {
         res.status(500).json({ message: "Server error", error: err.message });
     }
 };
+
+// ============================================
+// NEW WORKFLOW FUNCTIONS
+// ============================================
+
+// New function to handle approval with workflow
+exports.approveRequisitionStep = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { comments, delegateTo } = req.body;
+        const approverId = req.user._id;
+
+        // Find requisition
+        const requisition = await Requisition.findById(id)
+            .populate('workflow')
+            .populate('employee')
+            .populate('currentApprovalStep.approvers.userId');
+
+        if (!requisition) {
+            return res.status(404).json({
+                success: false,
+                message: "Requisition not found"
+            });
+        }
+
+        // Check if requisition is in review
+        if (requisition.status !== "in-review") {
+            return res.status(400).json({
+                success: false,
+                message: `Requisition is not in review. Current status: ${requisition.status}`
+            });
+        }
+
+        // Check if user can approve this step
+        if (!requisition.canUserApprove(approverId)) {
+            return res.status(403).json({
+                success: false,
+                message: "You are not authorized to approve this requisition"
+            });
+        }
+
+        // Handle delegation
+        if (delegateTo) {
+            return await handleDelegation(requisition, approverId, delegateTo, comments, res);
+        }
+
+        // Update approver status
+        const approverIndex = requisition.currentApprovalStep.approvers
+            .findIndex(a => a.userId && a.userId._id.equals(approverId));
+
+        if (approverIndex === -1) {
+            return res.status(400).json({
+                success: false,
+                message: "Approver not found in current step"
+            });
+        }
+
+        requisition.currentApprovalStep.approvers[approverIndex].status = "approved";
+        requisition.currentApprovalStep.approvers[approverIndex].approvedAt = new Date();
+        requisition.currentApprovalStep.approvers[approverIndex].comments = comments;
+        requisition.currentApprovalStep.approvalsReceived += 1;
+
+        // Add to history
+        requisition.addHistory(
+            "approved_step",
+            req.user,
+            comments || "Approved without comments",
+            { step: requisition.currentApprovalStep.nodeName }
+        );
+
+        // Add to timeline
+        requisition.addToTimeline(
+            requisition.approvalSteps ? requisition.approvalSteps.length + 1 : 1,
+            "approved",
+            req.user,
+            requisition.currentApprovalStep.nodeId,
+            requisition.currentApprovalStep.nodeName,
+            { comments }
+        );
+
+        // Check if step is complete
+        await checkAndProcessStepCompletion(requisition);
+
+        await requisition.save();
+
+        res.status(200).json({
+            success: true,
+            message: "Approval submitted successfully",
+            data: {
+                requisitionId: requisition._id,
+                currentStep: requisition.currentApprovalStep,
+                status: requisition.status
+            }
+        });
+
+    } catch (error) {
+        console.error('Error approving requisition step:', error);
+        res.status(500).json({
+            success: false,
+            message: "Server error while processing approval",
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+};
+
+// New function to reject with workflow
+exports.rejectRequisitionStep = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason, comments } = req.body;
+        const approverId = req.user._id;
+
+        const requisition = await Requisition.findById(id);
+
+        if (!requisition) {
+            return res.status(404).json({
+                success: false,
+                message: "Requisition not found"
+            });
+        }
+
+        // Check authorization
+        if (!requisition.canUserApprove(approverId)) {
+            return res.status(403).json({
+                success: false,
+                message: "You are not authorized to reject this requisition"
+            });
+        }
+
+        // Update approver status
+        const approverIndex = requisition.currentApprovalStep.approvers
+            .findIndex(a => a.userId && a.userId.equals(approverId));
+
+        if (approverIndex === -1) {
+            return res.status(400).json({
+                success: false,
+                message: "Approver not found in current step"
+            });
+        }
+
+        requisition.currentApprovalStep.approvers[approverIndex].status = "rejected";
+        requisition.currentApprovalStep.approvers[approverIndex].comments = comments || reason;
+        requisition.currentApprovalStep.rejectionsReceived += 1;
+
+        // Update requisition status
+        requisition.status = "rejected";
+        requisition.rejectedAt = new Date();
+        requisition.rejectionReason = reason || comments;
+
+        // Add to history and timeline
+        requisition.addHistory(
+            "rejected",
+            req.user,
+            reason || "Rejected without specific reason"
+        );
+
+        requisition.addToTimeline(
+            requisition.approvalSteps ? requisition.approvalSteps.length + 1 : 1,
+            "rejected",
+            req.user,
+            requisition.currentApprovalStep.nodeId,
+            requisition.currentApprovalStep.nodeName,
+            { reason, comments }
+        );
+
+        await requisition.save();
+
+        // Send rejection notification
+        await sendRequisitionNotification({
+            requisitionId: requisition._id,
+            action: "rejected",
+            actor: req.user._id,
+            reason
+        });
+
+        res.status(200).json({
+            success: true,
+            message: "Requisition rejected successfully",
+            data: {
+                requisitionId: requisition._id,
+                rejectedAt: requisition.rejectedAt,
+                rejectionReason: requisition.rejectionReason
+            }
+        });
+
+    } catch (error) {
+        console.error('Error rejecting requisition:', error);
+        res.status(500).json({
+            success: false,
+            message: "Server error while rejecting requisition",
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+};
+
+// New function to get requisitions pending user's approval
+exports.getPendingApprovals = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found"
+            });
+        }
+
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
+        // Find requisitions where user is a pending approver
+        const query = {
+            company: user.company,
+            status: "in-review",
+            "currentApprovalStep.approvers": {
+                $elemMatch: {
+                    userId: user._id,
+                    status: "pending"
+                }
+            }
+        };
+
+        const total = await Requisition.countDocuments(query);
+
+        const requisitions = await Requisition.find(query)
+            .populate([
+                {
+                    path: 'employee',
+                    select: 'firstName lastName email position department',
+                    populate: {
+                        path: 'department',
+                        select: 'name departmentCode'
+                    }
+                },
+                {
+                    path: 'department',
+                    select: 'name departmentCode'
+                },
+                {
+                    path: 'workflow',
+                    select: 'name code'
+                }
+            ])
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .lean();
+
+        // Add additional info
+        const enrichedRequisitions = requisitions.map(req => ({
+            ...req,
+            currentStep: req.currentApprovalStep,
+            isUrgent: req.urgency === "high" || 
+                     (req.currentApprovalStep.timeoutAt && 
+                      new Date(req.currentApprovalStep.timeoutAt) < new Date(Date.now() + 24 * 60 * 60 * 1000))
+        }));
+
+        res.status(200).json({
+            success: true,
+            data: enrichedRequisitions,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
+            },
+            summary: {
+                pendingCount: total,
+                urgentCount: enrichedRequisitions.filter(r => r.isUrgent).length
+            }
+        });
+
+    } catch (error) {
+        console.error('Error fetching pending approvals:', error);
+        res.status(500).json({
+            success: false,
+            message: "Server error while fetching pending approvals",
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+};
+
+// New function to get requisition workflow details
+exports.getRequisitionWorkflowDetails = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const requisition = await Requisition.findById(id)
+            .populate([
+                {
+                    path: 'workflow',
+                    select: 'name code description nodes connections version'
+                },
+                {
+                    path: 'employee',
+                    select: 'firstName lastName email'
+                },
+                {
+                    path: 'currentApprovalStep.approvers.userId',
+                    select: 'firstName lastName email avatar role'
+                },
+                {
+                    path: 'approvalSteps.approvers.userId',
+                    select: 'firstName lastName email'
+                }
+            ]);
+
+        if (!requisition) {
+            return res.status(404).json({
+                success: false,
+                message: "Requisition not found"
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            data: {
+                requisition: {
+                    id: requisition._id,
+                    itemName: requisition.itemName,
+                    status: requisition.status,
+                    createdAt: requisition.createdAt,
+                    estimatedCost: requisition.estimatedCost,
+                    category: requisition.category
+                },
+                workflow: requisition.workflow,
+                currentStep: requisition.currentApprovalStep,
+                completedSteps: requisition.approvalSteps || [],
+                timeline: requisition.workflowTimeline || [],
+                sla: {
+                    startDate: requisition.slaStartDate,
+                    dueDate: requisition.slaDueDate,
+                    breached: requisition.slaBreached
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('Error fetching workflow details:', error);
+        res.status(500).json({
+            success: false,
+            message: "Server error while fetching workflow details",
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+};
+
+// ============================================
+// EXPORTS
+// ============================================
+
+module.exports = exports;
