@@ -250,6 +250,108 @@ exports.getProfile = async (req, res) => {
     }
 };
 
+// Get current user info for /api/users/me
+exports.getCurrentUser = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        
+        // Get user with all relevant data
+        const user = await User.findById(userId)
+            .select('-password -verificationCode -emailVerificationCode -refreshToken')
+            .populate({
+                path: 'company',
+                select: 'name industry domain logo'
+            })
+            .populate({
+                path: 'departmentId',
+                select: 'name departmentCode description'
+            })
+            .populate({
+                path: 'manager',
+                select: 'firstName lastName email position avatar'
+            })
+            .populate({
+                path: 'directReports',
+                select: 'firstName lastName email position avatar status'
+            })
+            .lean();
+        
+        if (!user) {
+            return res.status(404).json({ 
+                success: false,
+                message: "User not found" 
+            });
+        }
+        
+        // Add full name field
+        user.fullName = `${user.firstName} ${user.lastName}`;
+        
+        // Format the response
+        const userResponse = {
+            id: user._id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            fullName: user.fullName,
+            email: user.email,
+            phoneNumber: user.phoneNumber,
+            avatar: user.avatar,
+            role: user.role,
+            position: user.position,
+            department: user.department,
+            departmentInfo: user.departmentId,
+            company: user.company,
+            companyName: user.companyName,
+            isEnterpriseAdmin: user.isEnterpriseAdmin,
+            isVerified: user.isVerified,
+            isEmailVerified: user.isEmailVerified,
+            status: user.status,
+            employmentType: user.employmentType,
+            workLocation: user.workLocation,
+            hireDate: user.hireDate,
+            manager: user.manager,
+            directReports: user.directReports,
+            address: user.address,
+            city: user.city,
+            state: user.state,
+            zipCode: user.zipCode,
+            country: user.country,
+            jobTitle: user.jobTitle,
+            bio: user.bio,
+            website: user.website,
+            linkedin: user.linkedin,
+            twitter: user.twitter,
+            twoFactorEnabled: user.twoFactorEnabled,
+            loginNotifications: user.loginNotifications,
+            activityNotifications: user.activityNotifications,
+            billing: user.billing,
+            usage: user.usage,
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt,
+            lastLoginAt: user.lastLoginAt,
+            registrationStatus: user.registrationStatus
+        };
+        
+        // Remove null values
+        Object.keys(userResponse).forEach(key => {
+            if (userResponse[key] === undefined || userResponse[key] === null) {
+                delete userResponse[key];
+            }
+        });
+        
+        res.status(200).json({
+            success: true,
+            data: userResponse
+        });
+        
+    } catch (err) {
+        console.error("Error in getCurrentUser:", err);
+        res.status(500).json({ 
+            success: false,
+            message: "Failed to fetch user information", 
+            error: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
+    }
+};
 // Update user profile
 exports.updateProfile = async (req, res) => {
     try {

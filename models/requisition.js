@@ -144,7 +144,7 @@ RequisitionSchema.methods.getCurrentApprovers = function() {
         return [];
     }
     return this.currentApprovalStep.approvers
-        .filter(approver => approver.status === "pending")
+        .filter(approver => approver && approver.status === "pending" && approver.userId)
         .map(approver => approver.userId);
 };
 
@@ -175,10 +175,52 @@ RequisitionSchema.methods.addToTimeline = function(step, action, user, nodeId = 
 
 // Method to check if user can approve
 RequisitionSchema.methods.canUserApprove = function(userId) {
-    if (this.status !== "in-review") return false;
-    
-    const currentApprovers = this.getCurrentApprovers();
-    return currentApprovers.some(id => id.equals(userId));
+    try {
+        console.log(`🔍 canUserApprove called for user: ${userId}, status: ${this.status}`);
+        
+        if (this.status !== "in-review") {
+            console.log(`❌ Requisition not in review, status: ${this.status}`);
+            return false;
+        }
+        
+        if (!this.currentApprovalStep || !this.currentApprovalStep.approvers) {
+            console.log(`❌ No current approval step or approvers`);
+            return false;
+        }
+
+        const userIdStr = userId.toString();
+        console.log(`Looking for user ID: ${userIdStr}`);
+        
+        // Debug: log all approvers
+        console.log(`Approvers list:`, JSON.stringify(this.currentApprovalStep.approvers, null, 2));
+
+        // Check if user is in approvers list
+        const canApprove = this.currentApprovalStep.approvers.some(approver => {
+            if (!approver || !approver.userId) {
+                console.log(`Skipping approver - null or missing userId`);
+                return false;
+            }
+            
+            const approverId = approver.userId._id ? 
+                approver.userId._id.toString() : 
+                approver.userId.toString();
+            
+            console.log(`Checking approver: ${approverId} vs user: ${userIdStr}, status: ${approver.status}`);
+            
+            const isMatch = approverId === userIdStr && approver.status === "pending";
+            if (isMatch) {
+                console.log(`✅ Found matching approver!`);
+            }
+            return isMatch;
+        });
+
+        console.log(`User ${userIdStr} can approve: ${canApprove}`);
+        return canApprove;
+        
+    } catch (error) {
+        console.error('❌ Error in canUserApprove:', error);
+        return false;
+    }
 };
 
 // Static method to find requisitions awaiting user's approval

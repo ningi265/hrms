@@ -15,7 +15,9 @@ const {
     approveRequisitionStep,
     rejectRequisitionStep,
     getPendingApprovals,
-    getRequisitionWorkflowDetails
+    getRequisitionWorkflowDetails,
+    getPendingApprovalsByUser,
+    approveRequisitionWorkflowStep
 } = require("../api/controllers/requisitionController");
 const { protect } = require("../api/middleware/authMiddleware");
 
@@ -62,7 +64,9 @@ const billingRoles = [
 
 // Get requisitions pending user's approval (for approvers)
 router.get("/pending", protect(billingRoles), getPendingApprovals);
-
+router.get("/pending-by-user", protect(billingRoles), getPendingApprovalsByUser);
+router.post("/:id/approve-workflow-step", protect(billingRoles), approveRequisitionWorkflowStep);
+router.post("/:id/reject-workflow-step", protect(billingRoles), approveRequisitionWorkflowStep);
 // Get detailed workflow information for a requisition
 router.get("/:id/workflow-details", protect(billingRoles), getRequisitionWorkflowDetails);
 

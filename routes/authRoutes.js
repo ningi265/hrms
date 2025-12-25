@@ -41,7 +41,8 @@ const {
         getAIConversationHistory,
         processAIChatMessage,
         clearAIConversation,
-        getApproversForCompany
+        getApproversForCompany,
+        getCurrentUser
 } = require("../api/controllers/authController");
 const { protect } = require("../api/middleware/authMiddleware");
 
@@ -133,6 +134,11 @@ router.get('/profile', protect(["admin", "procurement_officer","vendor","IT/Tech
         "Management",
         "Human Resources",
         "Accounting/Finance","Sales/Marketing","Vendor","Enterprise(CEO, CFO, etc.)"]), getProfile);
+router.get('/me', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance","Sales/Marketing","Vendor","Enterprise(CEO, CFO, etc.)"]), getCurrentUser);
 router.put('/profile', protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
