@@ -61,7 +61,7 @@ const billingRoles = [
 // ======================
 
 // Get requisitions pending user's approval (for approvers)
-router.get("/pending-approvals", protect(billingRoles), getPendingApprovals);
+router.get("/pending", protect(billingRoles), getPendingApprovals);
 
 // Get detailed workflow information for a requisition
 router.get("/:id/workflow-details", protect(billingRoles), getRequisitionWorkflowDetails);

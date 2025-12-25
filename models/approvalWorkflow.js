@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+const mongoose = require('mongoose');
 
 const workflowNodeSchema = new mongoose.Schema({
   id: {
@@ -271,64 +271,71 @@ approvalWorkflowSchema.virtual('activeInstances', {
 
 // Method to evaluate if workflow applies to a requisition
 approvalWorkflowSchema.methods.appliesToRequisition = function(requisition) {
+  console.log(`   [appliesTo] Checking workflow: ${this.name}`);
+  
   // Check if workflow is active
-  if (!this.isActive || this.isDraft) return false;
+  if (!this.isActive || this.isDraft) {
+    console.log(`     ❌ Not active or is draft`);
+    return false;
+  }
 
   // Check applyToAll flag
-  if (this.applyToAll) return true;
+  if (this.applyToAll) {
+    console.log(`     ✅ applyToAll is true`);
+    return true;
+  }
+
+  console.log(`     applyToAll is false, checking specific criteria...`);
 
   // Check departments
-  if (this.departments.length > 0 && requisition.department) {
+  if (this.departments && this.departments.length > 0 && requisition.department) {
+    console.log(`     Checking departments...`);
+    console.log(`       Workflow departments:`, this.departments.map(d => d.toString()));
+    console.log(`       Requisition department: ${requisition.department} (type: ${typeof requisition.department})`);
+    
     const deptMatch = this.departments.some(dept => 
-      dept.equals(requisition.department) || 
-      this.departmentCodes.includes(requisition.departmentCode)
+      dept.toString() === requisition.department.toString()
     );
-    if (!deptMatch) return false;
+    
+    if (!deptMatch) {
+      console.log(`     ❌ Department mismatch`);
+      return false;
+    }
+    console.log(`     ✅ Department matches`);
   }
 
   // Check categories
-  if (this.categories.length > 0 && requisition.category) {
-    if (!this.categories.includes(requisition.category)) return false;
+  if (this.categories && this.categories.length > 0 && requisition.category) {
+    console.log(`     Checking categories...`);
+    console.log(`       Workflow categories:`, this.categories);
+    console.log(`       Requisition category: ${requisition.category}`);
+    
+    if (!this.categories.includes(requisition.category)) {
+      console.log(`     ❌ Category mismatch`);
+      return false;
+    }
+    console.log(`     ✅ Category matches`);
   }
 
   // Check amount range
   if (requisition.estimatedCost) {
-    if (requisition.estimatedCost < this.minAmount) return false;
-    if (this.maxAmount && requisition.estimatedCost > this.maxAmount) return false;
-  }
-
-  // Check trigger conditions
-  if (this.triggerConditions.length > 0) {
-    const meetsAllConditions = this.triggerConditions.every(condition => {
-      const fieldValue = requisition[condition.field];
-      
-      switch(condition.operator) {
-        case 'eq':
-          return fieldValue == condition.value;
-        case 'neq':
-          return fieldValue != condition.value;
-        case 'gt':
-          return fieldValue > condition.value;
-        case 'gte':
-          return fieldValue >= condition.value;
-        case 'lt':
-          return fieldValue < condition.value;
-        case 'lte':
-          return fieldValue <= condition.value;
-        case 'contains':
-          return fieldValue && fieldValue.includes(condition.value);
-        case 'in':
-          return condition.value.includes(fieldValue);
-        case 'not-in':
-          return !condition.value.includes(fieldValue);
-        default:
-          return true;
-      }
-    });
+    console.log(`     Checking amount range...`);
+    console.log(`       Requisition cost: ${requisition.estimatedCost}`);
+    console.log(`       Workflow minAmount: ${this.minAmount}`);
+    console.log(`       Workflow maxAmount: ${this.maxAmount}`);
     
-    if (!meetsAllConditions) return false;
+    if (requisition.estimatedCost < this.minAmount) {
+      console.log(`     ❌ Below minimum amount`);
+      return false;
+    }
+    if (this.maxAmount && requisition.estimatedCost > this.maxAmount) {
+      console.log(`     ❌ Above maximum amount`);
+      return false;
+    }
+    console.log(`     ✅ Amount within range`);
   }
 
+  console.log(`     ✅ All criteria matched`);
   return true;
 };
 
@@ -408,38 +415,40 @@ approvalWorkflowSchema.methods.evaluateConditions = function(conditions, requisi
   return result;
 };
 
-// Static method to find applicable workflow for a requisition
 approvalWorkflowSchema.statics.findApplicableWorkflow = async function(requisition, companyId) {
+  console.log('🔍 [MODEL] findApplicableWorkflow called with:');
+  console.log('   companyId:', companyId);
+  console.log('   requisition department:', requisition.department);
+  console.log('   requisition department type:', typeof requisition.department);
+  console.log('   requisition estimatedCost:', requisition.estimatedCost);
+  console.log('   requisition category:', requisition.category);
+
   const workflows = await this.find({
     company: companyId,
     isActive: true,
-    isDraft: false,
-    $or: [
-      { applyToAll: true },
-      { departments: requisition.department },
-      { departmentCodes: requisition.departmentCode },
-      { categories: requisition.category }
-    ]
+    isDraft: false
   }).sort({ priority: 1, createdAt: -1 });
+
+  console.log(`📋 [MODEL] Found ${workflows.length} total workflows for company ${companyId}`);
 
   // Find first workflow that applies
   for (const workflow of workflows) {
-    if (workflow.appliesToRequisition(requisition)) {
+    console.log(`\n🔍 [MODEL] Checking workflow: ${workflow.name} (ID: ${workflow._id})`);
+    
+    // Check if workflow applies
+    const applies = workflow.appliesToRequisition(requisition);
+    console.log(`   ${workflow.name} appliesToRequisition result: ${applies}`);
+    
+    if (applies) {
+      console.log(`✅ [MODEL] Selected workflow: ${workflow.name}`);
       return workflow;
     }
   }
 
+  console.log('❌ [MODEL] No workflow matched all criteria');
   return null;
 };
 
-// Indexes for performance
-approvalWorkflowSchema.index({ company: 1, isActive: 1, isDraft: 1 });
-approvalWorkflowSchema.index({ company: 1, code: 1 }, { unique: true });
-approvalWorkflowSchema.index({ company: 1, departments: 1 });
-approvalWorkflowSchema.index({ company: 1, categories: 1 });
-approvalWorkflowSchema.index({ company: 1, priority: 1 });
-approvalWorkflowSchema.index({ 'statistics.lastUsed': -1 });
-
+// Export as CommonJS
 const ApprovalWorkflow = mongoose.model('ApprovalWorkflow', approvalWorkflowSchema);
-
-export default ApprovalWorkflow;
+module.exports = ApprovalWorkflow;

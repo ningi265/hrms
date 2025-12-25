@@ -30,16 +30,115 @@ const createGmailTransporter = () => {
 // HELPER FUNCTIONS
 // ============================================
 
+// New function to handle auto-approval after vendor selection
+exports.handleAutoApprovalAfterVendorSelection = async (requisitionId, actualPrice) => {
+    try {
+        const requisition = await Requisition.findById(requisitionId)
+            .populate('workflow');
+        
+        if (!requisition) {
+            throw new Error('Requisition not found');
+        }
+
+        // Check if workflow has auto-approval threshold
+        if (requisition.workflow && requisition.workflow.autoApproveBelow) {
+            if (actualPrice <= requisition.workflow.autoApproveBelow) {
+                console.log(`✅ AUTO-APPROVING: Actual price ${actualPrice} <= ${requisition.workflow.autoApproveBelow}`);
+                
+                // Skip all remaining approval steps
+                requisition.status = "auto-approved";
+                requisition.autoApproved = true;
+                requisition.autoApproveReason = `Auto-approved: Actual price ${actualPrice} below ${requisition.workflow.autoApproveBelow} threshold`;
+                requisition.actualPrice = actualPrice;
+                requisition.approvedAt = new Date();
+                requisition.currentApprovalStep = null;
+                
+                // Add to history
+                requisition.addHistory(
+                    "auto_approved",
+                    { _id: null, firstName: "System", lastName: "" },
+                    `Auto-approved after vendor selection. Price: ${actualPrice}`
+                );
+                
+                // Add to timeline
+                requisition.addToTimeline(
+                    requisition.approvalSteps ? requisition.approvalSteps.length + 1 : 1,
+                    "auto_approved",
+                    { _id: null, firstName: "System", lastName: "" },
+                    null,
+                    "Vendor Selection",
+                    { actualPrice, threshold: requisition.workflow.autoApproveBelow }
+                );
+                
+                await requisition.save();
+                
+                return {
+                    success: true,
+                    autoApproved: true,
+                    message: `Requisition auto-approved: Price ${actualPrice} below threshold ${requisition.workflow.autoApproveBelow}`
+                };
+            } else {
+                console.log(`⏳ No auto-approval: Actual price ${actualPrice} > ${requisition.workflow.autoApproveBelow}`);
+                
+                // Continue with normal approval process
+                requisition.actualPrice = actualPrice;
+                await requisition.save();
+                
+                return {
+                    success: true,
+                    autoApproved: false,
+                    message: `Continuing with approval workflow: Price ${actualPrice} above threshold ${requisition.workflow.autoApproveBelow}`
+                };
+            }
+        }
+        
+        return {
+            success: true,
+            autoApproved: false,
+            message: "No auto-approval threshold configured for this workflow"
+        };
+        
+    } catch (error) {
+        console.error('Error handling auto-approval after vendor selection:', error);
+        throw error;
+    }
+};
+
+
 // Helper function to assign workflow to requisition
 const assignWorkflowToRequisition = async (requisition) => {
     try {
+        console.log('🔍 [WORKFLOW DEBUG] Starting workflow assignment:');
+        console.log('   Requisition ID:', requisition._id);
+        console.log('   Company:', requisition.company);
+        console.log('   Department:', requisition.department);
+        console.log('   Department (type):', typeof requisition.department);
+        console.log('   Estimated Cost:', requisition.estimatedCost);
+        console.log('   Category:', requisition.category);
+
+        // Check if model method exists
+        if (typeof ApprovalWorkflow.findApplicableWorkflow !== 'function') {
+            console.error('❌ findApplicableWorkflow is not a function!');
+            return requisition;
+        }
+
         // Find applicable workflow
+        console.log('🔄 Calling findApplicableWorkflow...');
         const workflow = await ApprovalWorkflow.findApplicableWorkflow(
             requisition,
             requisition.company
         );
 
         if (workflow) {
+            console.log(`✅ Found workflow: ${workflow.name} (ID: ${workflow._id})`);
+            console.log('   Workflow details:', {
+                autoApproveBelow: workflow.autoApproveBelow,
+                applyToAll: workflow.applyToAll,
+                departments: workflow.departments,
+                minAmount: workflow.minAmount,
+                maxAmount: workflow.maxAmount
+            });
+            
             requisition.workflow = workflow._id;
             requisition.workflowInstanceId = `${workflow.code}-${Date.now()}`;
             
@@ -49,23 +148,39 @@ const assignWorkflowToRequisition = async (requisition) => {
                 requisition.slaDueDate = new Date(Date.now() + workflow.slaHours * 60 * 60 * 1000);
             }
 
-            // Check for auto-approval
-            if (workflow.autoApproveBelow && requisition.estimatedCost <= workflow.autoApproveBelow) {
-                requisition.status = "auto-approved";
-                requisition.autoApproved = true;
-                requisition.autoApproveReason = `Auto-approved: Cost below ${workflow.autoApproveBelow} threshold`;
-            } else {
-                // Initialize workflow
-                await initializeWorkflowSteps(requisition, workflow);
-                requisition.status = "in-review";
-            }
+            // REMOVED: Auto-approval check during requisition creation
+            // Auto-approval will now be handled later when actual price is known
+            
+            // Initialize workflow steps (always go through normal approval process)
+            console.log(`🔄 Initializing workflow steps for: ${workflow.name}`);
+            await initializeWorkflowSteps(requisition, workflow);
+            requisition.status = "in-review";
         } else {
-            console.warn(`No workflow found for requisition: ${requisition._id}`);
+            console.warn(`⚠️ No workflow found for requisition: ${requisition._id}`);
+            
+            // Debug: List all available workflows
+            console.log('🔍 Checking all available workflows...');
+            const allWorkflows = await ApprovalWorkflow.find({
+                company: requisition.company,
+                isActive: true,
+                isDraft: false
+            });
+            
+            console.log(`📋 Found ${allWorkflows.length} active, published workflows:`);
+            allWorkflows.forEach((wf, i) => {
+                console.log(`   ${i+1}. ${wf.name} (ID: ${wf._id})`);
+                console.log(`      applyToAll: ${wf.applyToAll}`);
+                console.log(`      departments: ${wf.departments ? wf.departments.length : 0} departments`);
+                console.log(`      minAmount: ${wf.minAmount}, maxAmount: ${wf.maxAmount}`);
+                console.log(`      autoApproveBelow: ${wf.autoApproveBelow}`);
+                console.log(`      categories: ${wf.categories ? wf.categories.join(', ') : 'none'}`);
+            });
         }
 
         return requisition;
     } catch (error) {
-        console.error("Error assigning workflow:", error);
+        console.error("❌ Error assigning workflow:", error);
+        console.error(error.stack);
         throw error;
     }
 };
@@ -597,17 +712,12 @@ exports.createRequisition = async (req, res) => {
         // Save requisition
         await newRequisition.save();
 
-        // Assign and initialize workflow
+        // Assign and initialize workflow (without auto-approval check)
         await assignWorkflowToRequisition(newRequisition);
         
-        // If auto-approved, update history
-        if (newRequisition.status === "auto-approved") {
-            newRequisition.addHistory(
-                "auto_approved",
-                { _id: null, firstName: "System", lastName: "" },
-                newRequisition.autoApproveReason
-            );
-        }
+        // REMOVED: Auto-approval logic during creation
+        // Auto-approval will now be handled later when vendor bids are submitted
+        // and a vendor with a known price has been selected
 
         await newRequisition.save();
 
@@ -650,9 +760,7 @@ exports.createRequisition = async (req, res) => {
 
         res.status(201).json({ 
             success: true,
-            message: newRequisition.status === "auto-approved" 
-                ? "Requisition submitted and auto-approved" 
-                : "Requisition submitted successfully",
+            message: "Requisition submitted successfully",
             data: populatedRequisition,
             workflowStatus: {
                 hasWorkflow: !!newRequisition.workflow,
