@@ -384,10 +384,20 @@ export const getWorkflows = async (req, res) => {
 // @access  Private
 export const getWorkflow = async (req, res) => {
   try {
-    const workflow = await ApprovalWorkflow.findOne({
-      _id: req.params.id,
-      company: req.user.company
-    }).populate([
+    console.log('Get workflow - User:', req.user);
+    
+    // Build flexible query
+    const query = { _id: req.params.id };
+    
+    if (req.user?.company) {
+      query.company = req.user.company;
+    } else if (req.user?.id) {
+      query.createdBy = req.user.id;
+    }
+    
+    console.log('Get workflow - Query:', query);
+
+    const workflow = await ApprovalWorkflow.findOne(query).populate([
       { path: 'createdBy', select: 'name email' },
       { path: 'updatedBy', select: 'name email' },
       { path: 'departments', select: 'name code head' },
@@ -444,21 +454,44 @@ export const updateWorkflow = async (req, res) => {
       allowDelegation,
       notifications,
       version,
-      isDraft
+      isDraft,
+      company // Get company from request body
     } = req.body;
 
+    console.log('Update workflow - User:', req.user);
+    console.log('Update workflow - Body company:', company);
+    console.log('Update workflow - User company:', req.user?.company);
+
+    // Build query - try to find by ID first, then optionally by company
+    const query = { _id: req.params.id };
+    
+    // If user has company, add it to query
+    if (req.user?.company) {
+      query.company = req.user.company;
+    } 
+    // If company is provided in body, use it
+    else if (company) {
+      query.company = company;
+    }
+    // Otherwise, find workflow created by this user
+    else if (req.user?.id) {
+      query.createdBy = req.user.id;
+    }
+
+    console.log('Update workflow - Query:', query);
+
     // Find workflow
-    let workflow = await ApprovalWorkflow.findOne({
-      _id: req.params.id,
-      company: req.user.company
-    });
+    let workflow = await ApprovalWorkflow.findOne(query);
 
     if (!workflow) {
+      console.log('Workflow not found with query:', query);
       return res.status(404).json({
         success: false,
         message: 'Workflow not found'
       });
     }
+
+    console.log('Found workflow:', workflow._id);
 
     // Check if workflow is in use (if trying to deactivate or modify significantly)
     if (isActive === false && workflow.isActive === true) {
@@ -507,6 +540,8 @@ export const updateWorkflow = async (req, res) => {
       updatedBy: req.user.id
     };
 
+    console.log('Update data:', updateData);
+
     workflow = await ApprovalWorkflow.findByIdAndUpdate(
       req.params.id,
       updateData,
@@ -524,6 +559,7 @@ export const updateWorkflow = async (req, res) => {
     });
  } catch (error) {
     console.error('Update workflow error:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to update workflow'
@@ -532,22 +568,69 @@ export const updateWorkflow = async (req, res) => {
 };
 
 // @desc    Delete approval workflow
-// @route   DELETE /api/approval-workflows/:id
+// @route   DELETE /api/workflows/:id
 // @access  Private (Admin/Manager)
 export const deleteWorkflow = async (req, res) => {
   try {
-    // Find workflow
-    const workflow = await ApprovalWorkflow.findOne({
-      _id: req.params.id,
+    console.log('DELETE /api/workflows/:id called');
+    console.log('Workflow ID to delete:', req.params.id);
+    console.log('User making request:', {
+      id: req.user.id,
+      role: req.user.role,
       company: req.user.company
     });
 
-    if (!workflow) {
-      return res.status(404).json({
+    // Build query - try multiple approaches to find the workflow
+    const query = { _id: req.params.id };
+    
+    // First, try to find by company if available
+    if (req.user?.company) {
+      query.company = req.user.company;
+      console.log('Querying by company:', req.user.company);
+    } 
+    // If no company, try to find by createdBy (user who created the workflow)
+    else if (req.user?.id || req.user?._id) {
+      const userId = req.user.id || req.user._id;
+      query.createdBy = userId;
+      console.log('Querying by createdBy:', userId);
+    }
+    // If still no query criteria, allow admin/enterprise users to delete
+    else if (req.user?.role === 'Enterprise(CEO, CFO, etc.)' || req.user?.role === 'admin') {
+      console.log('Admin/Enterprise user, allowing delete without company filter');
+      // Just use the ID query
+    } 
+    // Otherwise, restrict access
+    else {
+      return res.status(403).json({
         success: false,
-        message: 'Workflow not found'
+        message: 'Not authorized to delete workflows'
       });
     }
+
+    console.log('Final query for workflow:', query);
+
+    // Find workflow
+    const workflow = await ApprovalWorkflow.findOne(query);
+    
+    if (!workflow) {
+      console.log('Workflow not found with query:', query);
+      
+      // For debugging, show what workflows exist
+      const allWorkflows = await ApprovalWorkflow.find({}, '_id name createdBy company');
+      console.log('Available workflows:', allWorkflows);
+      
+      return res.status(404).json({
+        success: false,
+        message: 'Workflow not found or you do not have permission to delete it'
+      });
+    }
+
+    console.log('Found workflow:', {
+      id: workflow._id,
+      name: workflow.name,
+      createdBy: workflow.createdBy,
+      company: workflow.company
+    });
 
     // Check if workflow is in use
     const requisitionCount = await Requisition.countDocuments({
@@ -561,14 +644,29 @@ export const deleteWorkflow = async (req, res) => {
       });
     }
 
-    await workflow.deleteOne();
+    // Perform deletion
+    await ApprovalWorkflow.deleteOne({ _id: workflow._id });
+    console.log('Workflow deleted successfully:', workflow._id);
 
     res.status(200).json({
       success: true,
-      message: 'Workflow deleted successfully'
+      message: 'Workflow deleted successfully',
+      deletedWorkflow: {
+        id: workflow._id,
+        name: workflow.name
+      }
     });
   } catch (error) {
     console.error('Delete workflow error:', error);
+    console.error('Error stack:', error.stack);
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid workflow ID format'
+      });
+    }
+    
     res.status(500).json({
       success: false,
       message: 'Failed to delete workflow'
@@ -577,52 +675,98 @@ export const deleteWorkflow = async (req, res) => {
 };
 
 // @desc    Clone approval workflow
-// @route   POST /api/approval-workflows/:id/clone
+// @route   POST /api/workflows/:id/clone
 // @access  Private (Admin/Manager)
 export const cloneWorkflow = async (req, res) => {
   try {
     const { name: newName, description: newDescription } = req.body;
 
+    console.log('Clone workflow - User:', req.user);
+    console.log('Clone workflow - Body:', req.body);
+
+    // Build flexible query
+    const query = { _id: req.params.id };
+    
+    // Try multiple approaches to find the workflow
+    if (req.user?.company) {
+      query.company = req.user.company;
+      console.log('Querying by company:', req.user.company);
+    } else if (req.user?.id || req.user?._id) {
+      const userId = req.user.id || req.user._id;
+      query.createdBy = userId;
+      console.log('Querying by createdBy:', userId);
+    } else {
+      // For admin/enterprise users, allow cloning any workflow
+      console.log('No company or user ID, trying to find workflow by ID only');
+    }
+
+    console.log('Clone workflow - Query:', query);
+
     // Find original workflow
-    const originalWorkflow = await ApprovalWorkflow.findOne({
-      _id: req.params.id,
-      company: req.user.company
-    });
+    const originalWorkflow = await ApprovalWorkflow.findOne(query);
 
     if (!originalWorkflow) {
+      console.log('Original workflow not found with query:', query);
       return res.status(404).json({
         success: false,
-        message: 'Workflow not found'
+        message: 'Workflow not found or you do not have permission to clone it'
       });
     }
 
-    // Create clone
+    console.log('Found original workflow:', originalWorkflow._id);
+
+    // Get user ID for createdBy field
+    const createdById = req.user?.id || req.user?._id;
+    if (!createdById) {
+      return res.status(400).json({
+        success: false,
+        message: 'User information is required for cloning'
+      });
+    }
+
+    // Create clone data
     const cloneData = {
       ...originalWorkflow.toObject(),
-      _id: undefined,
+      _id: undefined, // Remove the original ID
       name: newName || `${originalWorkflow.name} (Copy)`,
       description: newDescription || originalWorkflow.description,
       code: undefined, // Will be auto-generated
       isDraft: true, // Clone as draft
-      createdBy: req.user.id,
+      createdBy: createdById,
       updatedBy: undefined,
       statistics: {
         totalRequests: 0,
         avgApprovalTime: null,
         completionRate: null,
-        lastUsed: null
+        lastUsed: null,
+        activeInstances: 0
       },
+      activeInstances: 0,
       createdAt: undefined,
-      updatedAt: undefined
+      updatedAt: undefined,
+      __v: undefined // Remove version key
     };
+
+    // Remove any undefined values
+    Object.keys(cloneData).forEach(key => {
+      if (cloneData[key] === undefined) {
+        delete cloneData[key];
+      }
+    });
+
+    console.log('Clone data prepared:', cloneData.name);
 
     const clonedWorkflow = new ApprovalWorkflow(cloneData);
     await clonedWorkflow.save();
 
+    // Populate the response
     await clonedWorkflow.populate([
       { path: 'createdBy', select: 'name email' },
-      { path: 'departments', select: 'name code' }
+      { path: 'departments', select: 'name code' },
+      { path: 'company', select: 'name' }
     ]);
+
+    console.log('Workflow cloned successfully:', clonedWorkflow._id);
 
     res.status(201).json({
       success: true,
@@ -631,67 +775,147 @@ export const cloneWorkflow = async (req, res) => {
     });
   } catch (error) {
     console.error('Clone workflow error:', error);
+    console.error('Error stack:', error.stack);
+    
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: messages
+      });
+    }
+    
     res.status(500).json({
       success: false,
-      message: 'Failed to clone workflow'
+      message: error.message || 'Failed to clone workflow'
     });
   }
 };
 
+
 // @desc    Publish workflow (convert draft to active)
-// @route   POST /api/approval-workflows/:id/publish
+// @route   POST /api/workflows/:id/publish
 // @access  Private (Admin/Manager)
 export const publishWorkflow = async (req, res) => {
   try {
-    const workflow = await ApprovalWorkflow.findOne({
-      _id: req.params.id,
-      company: req.user.company,
-      isDraft: true
-    });
+    console.log('Publish workflow - User:', req.user);
+    console.log('Publish workflow - Params:', req.params);
+
+    // Build flexible query
+    const query = { _id: req.params.id };
+    
+    // Try multiple approaches to find the workflow
+    if (req.user?.company) {
+      query.company = req.user.company;
+      console.log('Querying by company:', req.user.company);
+    } else if (req.user?.id || req.user?._id) {
+      const userId = req.user.id || req.user._id;
+      query.createdBy = userId;
+      console.log('Querying by createdBy:', userId);
+    } else {
+      // For admin/enterprise users, allow publishing any workflow
+      console.log('No company or user ID, trying to find workflow by ID only');
+    }
+
+    console.log('Publish workflow - Query:', query);
+
+    // Find workflow
+    const workflow = await ApprovalWorkflow.findOne(query);
 
     if (!workflow) {
+      console.log('Workflow not found with query:', query);
       return res.status(404).json({
         success: false,
-        message: 'Draft workflow not found'
+        message: 'Draft workflow not found or you do not have permission to publish it'
+      });
+    }
+
+    console.log('Found workflow:', {
+      id: workflow._id,
+      name: workflow.name,
+      isDraft: workflow.isDraft,
+      createdBy: workflow.createdBy
+    });
+
+    // Check if workflow is already published
+    if (!workflow.isDraft) {
+      return res.status(400).json({
+        success: false,
+        message: 'Workflow is already published'
       });
     }
 
     // Validate workflow before publishing
-    validateWorkflowNodes(workflow.nodes);
-    validateWorkflowConnections(workflow.nodes, workflow.connections);
-
-    // Check if there's an active workflow with same scope
-    const conflictingWorkflow = await ApprovalWorkflow.findOne({
-      company: req.user.company,
-      _id: { $ne: workflow._id },
-      isActive: true,
-      isDraft: false,
-      $or: [
-        { applyToAll: true },
-        { departments: { $in: workflow.departments } },
-        { categories: { $in: workflow.categories } }
-      ]
-    });
-
-    if (conflictingWorkflow) {
+    try {
+      validateWorkflowNodes(workflow.nodes);
+      validateWorkflowConnections(workflow.nodes, workflow.connections);
+    } catch (validationError) {
       return res.status(400).json({
         success: false,
-        message: 'Active workflow with similar scope already exists',
-        conflictingWorkflow: {
-          id: conflictingWorkflow._id,
-          name: conflictingWorkflow.name,
-          code: conflictingWorkflow.code
-        }
+        message: `Cannot publish workflow: ${validationError.message}`,
+        error: validationError.message
+      });
+    }
+
+    // Check for conflicting workflows (only if user has company)
+    if (req.user?.company) {
+      const conflictingWorkflow = await ApprovalWorkflow.findOne({
+        company: req.user.company,
+        _id: { $ne: workflow._id },
+        isActive: true,
+        isDraft: false,
+        $or: [
+          { applyToAll: true },
+          { departments: { $in: workflow.departments } },
+          { categories: { $in: workflow.categories } }
+        ]
+      });
+
+      if (conflictingWorkflow) {
+        return res.status(400).json({
+          success: false,
+          message: 'Active workflow with similar scope already exists',
+          conflictingWorkflow: {
+            id: conflictingWorkflow._id,
+            name: conflictingWorkflow.name,
+            code: conflictingWorkflow.code
+          }
+        });
+      }
+    }
+
+    // Get user ID for updatedBy field
+    const updatedById = req.user?.id || req.user?._id;
+    if (!updatedById) {
+      return res.status(400).json({
+        success: false,
+        message: 'User information is required for publishing'
       });
     }
 
     // Publish workflow
     workflow.isDraft = false;
     workflow.isActive = true;
-    workflow.updatedBy = req.user.id;
-    workflow.version = (parseFloat(workflow.version) + 0.1).toFixed(1);
+    workflow.updatedBy = updatedById;
+    
+    // Increment version
+    const currentVersion = parseFloat(workflow.version) || 1.0;
+    workflow.version = (currentVersion + 0.1).toFixed(1);
+    
+    workflow.publishedAt = new Date();
 
     await workflow.save();
+
+    // Populate the response
+    await workflow.populate([
+      { path: 'createdBy', select: 'name email' },
+      { path: 'updatedBy', select: 'name email' },
+      { path: 'departments', select: 'name code' },
+      { path: 'company', select: 'name' }
+    ]);
+
+    console.log('Workflow published successfully:', workflow._id);
 
     res.status(200).json({
       success: true,
@@ -700,6 +924,17 @@ export const publishWorkflow = async (req, res) => {
     });
   } catch (error) {
     console.error('Publish workflow error:', error);
+    console.error('Error stack:', error.stack);
+    
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: messages
+      });
+    }
+    
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to publish workflow'

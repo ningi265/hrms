@@ -1899,6 +1899,88 @@ exports.getEmployees = async (req, res) => {
   }
 };
 
+
+
+// Get users with specific roles for the company
+exports.getApproversForCompany = async (req, res) => {
+  try {
+    // Get the requesting user's company
+    const requestingUser = await User.findById(req.user._id).select('company');
+    
+    if (!requestingUser || !requestingUser.company) {
+      return res.status(400).json({
+        success: false,
+        message: "User not found or not associated with a company"
+      });
+    }
+
+    // Define the target roles that can be approvers
+    const approverRoles = [
+      'IT/Technical',
+      'Executive',
+      'Management',
+      'Sales/Marketing',
+      'Driver',
+      'Operations',
+      'Human Resources',
+      'Accounting/Finance',
+      'Admin',
+      // Add any other roles that should be approvers
+      'Enterprise(CEO, CFO, etc.)',
+      'Approver',
+      'Supervisor',
+      'Department Head',
+      'Finance Manager',
+      'Procurement Manager'
+    ];
+
+    // Find users with approver roles in the same company
+    const approvers = await User.find({
+      company: requestingUser.company,
+      role: { $in: approverRoles },
+    })
+    .select('_id firstName lastName email role department position phoneNumber avatar companyName')
+    .sort({ lastName: 1, firstName: 1 })
+    .lean();
+
+    // Format the response
+    const formattedApprovers = approvers.map(approver => ({
+      id: approver._id,
+      _id: approver._id,
+      firstName: approver.firstName,
+      lastName: approver.lastName,
+      name: `${approver.firstName} ${approver.lastName}`,
+      email: approver.email,
+      role: approver.role,
+      department: approver.department,
+      position: approver.position,
+      phoneNumber: approver.phoneNumber,
+      avatar: approver.avatar,
+      companyName: approver.companyName
+    }));
+
+    console.log(`Fetched ${formattedApprovers.length} approvers for company ${requestingUser.company}`);
+
+    res.status(200).json({
+      success: true,
+      count: formattedApprovers.length,
+      data: formattedApprovers,
+      meta: {
+        company: requestingUser.company,
+        roles: approverRoles
+      }
+    });
+
+  } catch (err) {
+    console.error("Error in getApproversForCompany:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch approvers",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+};
+
 // @desc    Get an employee by ID
 // @route   GET /api/employees/:id
 // @access  Private

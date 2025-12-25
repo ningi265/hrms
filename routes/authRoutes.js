@@ -41,6 +41,7 @@ const {
         getAIConversationHistory,
         processAIChatMessage,
         clearAIConversation,
+        getApproversForCompany
 } = require("../api/controllers/authController");
 const { protect } = require("../api/middleware/authMiddleware");
 
@@ -194,6 +195,14 @@ router.put('/payment-methods/:paymentMethodId/default', protect(["admin", "procu
         "Management",
         "Human Resources",
         "Accounting/Finance","Sales/Marketing","Vendor","Enterprise(CEO, CFO, etc.)"]),setDefaultPaymentMethod);
+
+
+router.get('/approvers', protect(["admin", "procurement_officer","vendor","IT/Technical",
+        "Executive (CEO, CFO, etc.)",
+        "Management",
+        "Human Resources",
+        "Accounting/Finance","Sales/Marketing","Vendor","Enterprise(CEO, CFO, etc.)"]), getApproversForCompany);
+
 router.get('/employees/:id',protect(["admin", "procurement_officer","vendor","IT/Technical",
         "Executive (CEO, CFO, etc.)",
         "Management",
