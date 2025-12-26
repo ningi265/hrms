@@ -1,8 +1,9 @@
+
 const mongoose = require('mongoose');
-import ApprovalWorkflow from '../../models/approvalWorkflow.js';
-import Requisition from '../../models/requisition.js';
-import User from '../../models/user.js';
-import Department from '../../models/departments.js';
+const ApprovalWorkflow = require('../../models/approvalWorkflow.js');
+const Requisition = require('../../models/requisition.js');
+const User = require('../../models/user.js');
+const Department = require('../../models/departments.js');
 
 // Helper function to validate workflow nodes
 const validateWorkflowNodes = (nodes) => {
@@ -80,7 +81,7 @@ const validateWorkflowConnections = (nodes, connections) => {
 // @desc    Create new approval workflow
 // @route   POST /api/approval-workflows
 // @access  Private (Admin/Manager)
-export const createWorkflow = async (req, res) => {
+exports.createWorkflow = async (req, res) => {
   try {
     console.log('User object:', req.user); // Debug log
     console.log('Request body:', req.body); // Debug log
@@ -274,7 +275,7 @@ export const createWorkflow = async (req, res) => {
 // @desc    Get all approval workflows
 // @route   GET /api/approval-workflows
 // @access  Private
-export const getWorkflows = async (req, res) => {
+exports.getWorkflows = async (req, res) => {
   try {
     const {
       page = 1,
@@ -382,7 +383,7 @@ export const getWorkflows = async (req, res) => {
 // @desc    Get single approval workflow
 // @route   GET /api/approval-workflows/:id
 // @access  Private
-export const getWorkflow = async (req, res) => {
+exports.getWorkflow = async (req, res) => {
   try {
     console.log('Get workflow - User:', req.user);
     
@@ -431,7 +432,7 @@ export const getWorkflow = async (req, res) => {
 // @desc    Update approval workflow
 // @route   PUT /api/approval-workflows/:id
 // @access  Private (Admin/Manager)
-export const updateWorkflow = async (req, res) => {
+exports.updateWorkflow = async (req, res) => {
   try {
     const {
       name,
@@ -570,7 +571,7 @@ export const updateWorkflow = async (req, res) => {
 // @desc    Delete approval workflow
 // @route   DELETE /api/workflows/:id
 // @access  Private (Admin/Manager)
-export const deleteWorkflow = async (req, res) => {
+exports.deleteWorkflow = async (req, res) => {
   try {
     console.log('DELETE /api/workflows/:id called');
     console.log('Workflow ID to delete:', req.params.id);
@@ -677,7 +678,7 @@ export const deleteWorkflow = async (req, res) => {
 // @desc    Clone approval workflow
 // @route   POST /api/workflows/:id/clone
 // @access  Private (Admin/Manager)
-export const cloneWorkflow = async (req, res) => {
+exports.cloneWorkflow = async (req, res) => {
   try {
     const { name: newName, description: newDescription } = req.body;
 
@@ -797,7 +798,7 @@ export const cloneWorkflow = async (req, res) => {
 // @desc    Publish workflow (convert draft to active)
 // @route   POST /api/workflows/:id/publish
 // @access  Private (Admin/Manager)
-export const publishWorkflow = async (req, res) => {
+exports.publishWorkflow = async (req, res) => {
   try {
     console.log('Publish workflow - User:', req.user);
     console.log('Publish workflow - Params:', req.params);
@@ -945,7 +946,7 @@ export const publishWorkflow = async (req, res) => {
 // @desc    Get applicable workflow for requisition
 // @route   GET /api/approval-workflows/applicable
 // @access  Private
-export const getApplicableWorkflow = async (req, res) => {
+exports.getApplicableWorkflow = async (req, res) => {
   try {
     const { departmentId, category, estimatedCost, departmentCode, urgency, isCustomItem } = req.query;
 
@@ -989,7 +990,7 @@ export const getApplicableWorkflow = async (req, res) => {
 // @desc    Test workflow with sample data
 // @route   POST /api/approval-workflows/:id/test
 // @access  Private (Admin/Manager)
-export const testWorkflow = async (req, res) => {
+exports.testWorkflow = async (req, res) => {
   try {
     const { testData } = req.body;
 
@@ -1060,7 +1061,7 @@ export const testWorkflow = async (req, res) => {
 // @desc    Get workflow statistics
 // @route   GET /api/approval-workflows/:id/statistics
 // @access  Private
-export const getWorkflowStatistics = async (req, res) => {
+exports.getWorkflowStatistics = async (req, res) => {
   try {
     const workflow = await ApprovalWorkflow.findOne({
       _id: req.params.id,
@@ -1194,7 +1195,7 @@ export const getWorkflowStatistics = async (req, res) => {
 // @desc    Get workflow templates
 // @route   GET /api/approval-workflows/templates
 // @access  Private
-export const getWorkflowTemplates = async (req, res) => {
+exports.getWorkflowTemplates = async (req, res) => {
   try {
     const templates = [
       {
