@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+const mongoose = require('mongoose');
 import ApprovalWorkflow from '../../models/approvalWorkflow.js';
 import Requisition from '../../models/requisition.js';
 import User from '../../models/user.js';
