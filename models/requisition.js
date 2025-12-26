@@ -8,7 +8,7 @@ const RequisitionSchema = new mongoose.Schema({
     quantity: { type: Number, required: true },
     status: { 
         type: String, 
-        enum: ["pending", "in-review", "approved", "rejected", "cancelled", "escalated", "auto-approved"], 
+        enum: ["pending", "in-review", "approved", "approved-rfq", "rejected", "cancelled", "escalated", "auto-approved"], 
         default: "pending" 
     },
     budgetCode: { type: String, required: true },
@@ -59,7 +59,7 @@ const RequisitionSchema = new mongoose.Schema({
     // Additional fields
     projectCode: { type: String },
     costCenter: { type: String },
-    departmentCode: { type: String }, // Added for workflow matching
+    departmentCode: { type: String }, 
     
     // Approval workflow steps
     approvalSteps: [{ 
