@@ -15,14 +15,20 @@ const router = express.Router();
 
 // Create RFQ (Procurement Officers only)
 router.post("/", protect(["procurement_officer", "admin","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
+        "Executive (CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer",
         "Management",
         "Human Resources",
         "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), trackApiUsage, createRFQ);
 
 // Get all RFQs (Procurement Officers & Admins)
 router.get("/", protect(["procurement_officer", "admin", "Vendor","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
+        "Executive (CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer",
         "Management",
         "Human Resources",
         "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getAllRFQs);
@@ -32,19 +38,28 @@ router.post("/:id/quote", protect(["Vendor", "admin"]), trackApiUsage,submitQuot
 
 // Select the best vendor (Procurement Officers & Admins)
 router.put("/:id/select", protect(["procurement_officer", "admin","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
+        "Executive (CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer",
         "Management",
         "Human Resources",
         "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), selectVendor);
 
 router.get("/stats",  protect(["admin", "procurement_officer","vendor","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
+        "Executive (CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer",
         "Management",
         "Human Resources",
         "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]), getRFQStats);
 
 router.get("/:id", protect(["admin", "procurement_officer", "vendor","IT/Technical",
-        "Executive (CEO, CFO, etc.)",
+        "Executive (CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer",
         "Management",
         "Human Resources",
         "Accounting/Finance","Enterprise(CEO, CFO, etc.)"]),getRFQById);

@@ -17,7 +17,10 @@ const authorizedRoles = [
   "Accounting/Finance",
   "Other",
   "vendor",
-  "Driver","Enterprise(CEO, CFO, etc.)"
+  "Driver","Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ];
 
 // Fleet management routes
@@ -33,7 +36,10 @@ router.get('/', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver","Enterprise(CEO, CFO, etc.)"
+   "Driver","Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), driverController.getAllDrivers);
 
 router.post('/:id/location', protect([
@@ -48,7 +54,10 @@ router.post('/:id/location', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver","Enterprise(CEO, CFO, etc.)"
+   "Driver","Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), driverController.driverLoc);
 
 
@@ -65,7 +74,10 @@ router.get('/statistics', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-    "Driver","Enterprise(CEO, CFO, etc.)"
+    "Driver","Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), driverController.getFleetStatistics);
 
 router.get('/locations', protect(authorizedRoles), driverController.getDriverLocations);
@@ -81,7 +93,10 @@ router.get('/:driverId', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver","Enterprise(CEO, CFO, etc.)"
+   "Driver","Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), driverController.getDriverById);
 router.post('/drivers/:driverId/location', protect([
   "procurement_officer", 
@@ -95,7 +110,10 @@ router.post('/drivers/:driverId/location', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver","Enterprise(CEO, CFO, etc.)"
+   "Driver","Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), driverController.updateDriverLocation);
 router.patch('/:driverId/status',protect([
   "procurement_officer", 
@@ -109,7 +127,10 @@ router.patch('/:driverId/status',protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver","Enterprise(CEO, CFO, etc.)"
+   "Driver","Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), driverController.updateDriverStatus);
 
 router.get('/statistics', protect([
@@ -124,7 +145,10 @@ router.get('/statistics', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-    "Driver","Enterprise(CEO, CFO, etc.)"
+    "Driver","Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), driverController.getFleetStatistics);
 router.get('/assignments', protect([
   "procurement_officer", 
@@ -138,7 +162,10 @@ router.get('/assignments', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver","Enterprise(CEO, CFO, etc.)"
+   "Driver","Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), driverController.getRecentAssignments);
 router.post('/assignments', protect([
   "procurement_officer", 
@@ -152,7 +179,10 @@ router.post('/assignments', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-   "Driver","Enterprise(CEO, CFO, etc.)"
+   "Driver","Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), driverController.createAssignment);
 router.patch('/assignments/:assignmentId', protect([
   "procurement_officer", 
@@ -166,7 +196,10 @@ router.patch('/assignments/:assignmentId', protect([
   "Accounting/Finance",
   "Other",
   "vendor",
-  "Driver","Enterprise(CEO, CFO, etc.)"
+  "Driver","Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), driverController.updateAssignment);
 
 router.post('/:driverId/fetch-live-location', driverController.fetchLiveLocation);

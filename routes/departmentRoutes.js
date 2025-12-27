@@ -51,7 +51,10 @@ router.get('/stats',  protect([
     "Administrative Assistant",
     "Office Manager",
     "Customer Support Representative",
-    "Customer Success Manager"
+    "Customer Success Manager", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), getDepartmentStats);
 
 router.get('/export',protect([ 
@@ -84,7 +87,10 @@ router.get('/export',protect([
     "Administrative Assistant",
     "Office Manager",
     "Customer Support Representative",
-    "Customer Success Manager"
+    "Customer Success Manager", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), exportDepartments);
 
 
@@ -122,7 +128,10 @@ router.route('/')
     "Administrative Assistant",
     "Office Manager",
     "Customer Support Representative",
-    "Customer Success Manager"
+    "Customer Success Manager", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]),getAllDepartments)
   .post(protect([ 
   "admin", 
@@ -154,7 +163,10 @@ router.route('/')
     "Administrative Assistant",
     "Office Manager",
     "Customer Support Representative",
-    "Customer Success Manager"
+    "Customer Success Manager", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), createDepartment);
 
 // Bulk operations
@@ -188,7 +200,10 @@ router.put('/bulk-update', protect([
     "Administrative Assistant",
     "Office Manager",
     "Customer Support Representative",
-    "Customer Success Manager"
+    "Customer Success Manager", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), bulkUpdateDepartments);
 
 // Individual department operations
@@ -224,7 +239,10 @@ router.route('/:id')
     "Administrative Assistant",
     "Office Manager",
     "Customer Support Representative",
-    "Customer Success Manager"
+    "Customer Success Manager", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), updateDepartment)
   .delete(protect([ 
   "admin", 
@@ -256,7 +274,10 @@ router.route('/:id')
     "Administrative Assistant",
     "Office Manager",
     "Customer Support Representative",
-    "Customer Success Manager"
+    "Customer Success Manager", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), deleteDepartment);
 
 // Department employees management
@@ -294,7 +315,10 @@ router.route('/:departmentId/employees/:employeeId')
     "Administrative Assistant",
     "Office Manager",
     "Customer Support Representative",
-    "Customer Success Manager"
+    "Customer Success Manager", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), addEmployeeToDepartment)
   .delete(protect([ 
   "admin", 
@@ -326,7 +350,10 @@ router.route('/:departmentId/employees/:employeeId')
     "Administrative Assistant",
     "Office Manager",
     "Customer Support Representative",
-    "Customer Success Manager"
+    "Customer Success Manager", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), removeEmployeeFromDepartment);
 
 // Department performance management
@@ -362,7 +389,10 @@ router.route('/:id/performance')
     "Administrative Assistant",
     "Office Manager",
     "Customer Support Representative",
-    "Customer Success Manager"
+    "Customer Success Manager", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ]), updateDepartmentPerformance);
 
 module.exports = router;

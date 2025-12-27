@@ -292,7 +292,7 @@ const checkAndProcessStepCompletion = async (requisition) => {
             stepNumber: requisition.approvalSteps.length + 1
         });
 
-        // Get next step from workflow
+        // Get next step from workflow (or finalize if no more steps)
         await processNextWorkflowStep(requisition);
     }
 };
@@ -302,15 +302,7 @@ const processNextWorkflowStep = async (requisition) => {
   try {
     const workflow = await ApprovalWorkflow.findById(requisition.workflow);
     if (!workflow) {
-      throw new Error('Workflow not found');
-    }
-
-    const currentStep = requisition.currentApprovalStep;
-    
-    // Find connection from current node
-    const connection = workflow.connections.find(conn => conn.from === currentStep.nodeId);
-    if (!connection) {
-      // No more steps - requisition is fully approved
+      // No workflow - final approval
       requisition.status = "approved";
       requisition.approvedAt = new Date();
       requisition.currentApprovalStep = null;
@@ -318,10 +310,37 @@ const processNextWorkflowStep = async (requisition) => {
       requisition.addHistory(
         "fully_approved",
         { _id: null, firstName: "System", lastName: "" },
-        "All workflow steps completed"
+        "All workflow steps completed - final approval"
       );
       
-      // Add to timeline
+      requisition.addToTimeline(
+        requisition.approvalSteps ? requisition.approvalSteps.length + 1 : 1,
+        "workflow_completed",
+        { _id: null, firstName: "System", lastName: "" },
+        null,
+        "Workflow Completed",
+        { status: "approved" }
+      );
+      
+      return;
+    }
+
+    const currentStep = requisition.currentApprovalStep;
+    
+    // Find connection from current node
+    const connection = workflow.connections.find(conn => conn.from === currentStep.nodeId);
+    if (!connection) {
+      // No more steps - final approval (always "approved" status)
+      requisition.status = "approved";
+      requisition.approvedAt = new Date();
+      requisition.currentApprovalStep = null;
+      
+      requisition.addHistory(
+        "fully_approved",
+        { _id: null, firstName: "System", lastName: "" },
+        "All workflow steps completed - final approval"
+      );
+      
       requisition.addToTimeline(
         requisition.approvalSteps ? requisition.approvalSteps.length + 1 : 1,
         "workflow_completed",
@@ -349,19 +368,29 @@ const processNextWorkflowStep = async (requisition) => {
       
       if (actualNextNode) {
         await initializeNextStep(requisition, actualNextNode, workflow);
+        // Ensure status is in-review for next steps (not approved-rfq)
+        requisition.status = "in-review";
       } else {
-        // No valid next node - end workflow
+        // No valid next node - final approval
         requisition.status = "approved";
         requisition.approvedAt = new Date();
         requisition.currentApprovalStep = null;
       }
     } else if (nextNode.type === "end") {
-      // End of workflow
+      // End of workflow - always final approval
       requisition.status = "approved";
       requisition.approvedAt = new Date();
       requisition.currentApprovalStep = null;
+      
+      requisition.addHistory(
+        "fully_approved",
+        { _id: null, firstName: "System", lastName: "" },
+        "Workflow completed - final approval"
+      );
     } else {
       // Regular node (approval, parallel, notification)
+      // Reset status to in-review for next steps
+      requisition.status = "in-review";
       await initializeNextStep(requisition, nextNode, workflow);
     }
 
@@ -399,6 +428,9 @@ const initializeNextStep = async (requisition, node, workflow) => {
         requisition.currentApprovalStep.timeoutAt = timeoutAt;
     }
 
+    // Ensure status is in-review for new steps
+    requisition.status = "in-review";
+
     // Add to timeline
     requisition.addToTimeline(
         requisition.approvalSteps ? requisition.approvalSteps.length + 2 : 1,
@@ -406,13 +438,23 @@ const initializeNextStep = async (requisition, node, workflow) => {
         { _id: null, firstName: "System", lastName: "" },
         node.id,
         node.name,
-        { stepType: node.type }
+        { stepType: node.type, status: "in-review" }
     );
 
     // Send notifications for new step
     if (node.type === "approval" || node.type === "parallel") {
         await sendApprovalNotifications(requisition);
     }
+};
+
+const checkIfProcurementRole = (role) => {
+    const procurementRoles = [
+        "Procurement Officer",
+        "Senior Procurement Officer",
+        "Procurement Manager",
+        "Supply Chain Officer"
+    ];
+    return procurementRoles.includes(role);
 };
 
 // Helper function to handle delegation
@@ -1253,19 +1295,55 @@ exports.approveRequisitionWorkflowStep = async (req, res) => {
       currentStep.approvers[approverIndex].approvedAt = new Date();
       currentStep.approvalsReceived = (currentStep.approvalsReceived || 0) + 1;
 
-      // Add to history
-      requisition.addHistory(
-        "approved_step",
-        req.user,
-        comment || "Approved without comments",
-        { step: currentStep.nodeName }
-      );
+      const approverUser = await User.findById(approverId);
+      const isProcurementOfficer = checkIfProcurementRole(approverUser.role);
+    
+       if (isProcurementOfficer) {
+        // Set temporary status to approved-rfq
+        requisition.status = "approved-rfq";
+        
+        // Add special history entry
+        requisition.addHistory(
+            "approved_rfq_intermediate",
+            req.user,
+            comment || "Approved by procurement officer - pending final approval",
+            { 
+                step: currentStep.nodeName,
+                isProcurementApproval: true 
+            }
+        );
+        
+        // Add to timeline
+        requisition.addToTimeline(
+            requisition.approvalSteps ? requisition.approvalSteps.length + 1 : 1,
+            "approved_rfq_intermediate",
+            req.user,
+            currentStep.nodeId,
+            currentStep.nodeName,
+            { 
+                comments: comment,
+                status: "approved-rfq",
+                note: "Approved by procurement officer, awaiting next steps"
+            }
+        );
+    } else {
+        // Keep status as in-review for non-procurement approvals
+        requisition.status = "in-review";
+        
+        // Add to history
+        requisition.addHistory(
+            "approved_step",
+            req.user,
+            comment || "Approved without comments",
+            { step: currentStep.nodeName }
+        );
+    }
 
       // Check if step is complete
-      const approvalsMet = currentStep.approvalsReceived >= currentStep.minApprovalsRequired;
-      const allResponded = currentStep.approvers.every(a => 
+     const approvalsMet = currentStep.approvalsReceived >= currentStep.minApprovalsRequired;
+    const allResponded = currentStep.approvers.every(a => 
         a.status === "approved" || a.status === "rejected" || a.status === "delegated" || a.status === "info_requested"
-      );
+    );
 
       if (approvalsMet || (allResponded && currentStep.approvalsReceived > 0)) {
         // Step completed successfully
@@ -1276,28 +1354,32 @@ exports.approveRequisitionWorkflowStep = async (req, res) => {
         // Save completed step
         if (!requisition.approvalSteps) requisition.approvalSteps = [];
         requisition.approvalSteps.push({
-          ...currentStep.toObject(),
-          stepNumber: requisition.approvalSteps.length + 1
+            ...currentStep.toObject(),
+            stepNumber: requisition.approvalSteps.length + 1,
+            isProcurementStep: isProcurementOfficer
         });
 
         // Process next step
         await processNextWorkflowStep(requisition);
-      }
+    }
 
       await requisition.save();
 
-      return res.status(200).json({
+       return res.status(200).json({
         success: true,
-        message: "Approved successfully",
+        message: isProcurementOfficer 
+            ? "Approved by procurement officer - marked for RFQ processing" 
+            : "Approved successfully",
         data: {
-          requisitionId: requisition._id,
-          currentStep: requisition.currentApprovalStep,
-          status: requisition.status,
-          approvalsReceived: currentStep.approvalsReceived,
-          minApprovalsRequired: currentStep.minApprovalsRequired
+            requisitionId: requisition._id,
+            currentStep: requisition.currentApprovalStep,
+            status: requisition.status,
+            approvalsReceived: currentStep.approvalsReceived,
+            minApprovalsRequired: currentStep.minApprovalsRequired,
+            isProcurementApproval: isProcurementOfficer
         }
-      });
-    }
+    });
+}
 
     if (action === "reject") {
       // Handle rejection
@@ -2093,33 +2175,61 @@ exports.approveRequisitionStep = async (req, res) => {
       case "approve":
         // Update approver status
         requisition.currentApprovalStep.approvers[approverIndex].status = "approved";
-        requisition.currentApprovalStep.approvers[approverIndex].approvedAt = new Date();
-        requisition.currentApprovalStep.approvers[approverIndex].comments = comments;
-        requisition.currentApprovalStep.approvalsReceived += 1;
+    requisition.currentApprovalStep.approvers[approverIndex].approvedAt = new Date();
+    requisition.currentApprovalStep.approvers[approverIndex].comments = comments;
+    requisition.currentApprovalStep.approvalsReceived += 1;
 
         console.log(`✅ Approved. Approvals: ${requisition.currentApprovalStep.approvalsReceived}/${requisition.currentApprovalStep.minApprovalsRequired}`);
 
+        const approverUser = await User.findById(approverId);
+    const isProcurementOfficer = checkIfProcurementRole(approverUser.role);
+
+        if (isProcurementOfficer) {
+        // Set status to approved-rfq for procurement officer approvals
+        requisition.status = "approved-rfq";
+        
+        // Add special history entry
+        requisition.addHistory(
+            "approved_rfq_intermediate",
+            req.user,
+            comments || "Approved by procurement officer",
+            { 
+                step: requisition.currentApprovalStep.nodeName,
+                isProcurementApproval: true 
+            }
+        );
+        
+        console.log(`✅ Procurement officer approval - status set to approved-rfq`);
+    } else {
+        // Keep status as in-review for non-procurement approvals
+        requisition.status = "in-review";
+        
         // Add to history
         requisition.addHistory(
-          "approved_step",
-          req.user,
-          comments || "Approved without comments",
-          { step: requisition.currentApprovalStep.nodeName }
+            "approved_step",
+            req.user,
+            comments || "Approved without comments",
+            { step: requisition.currentApprovalStep.nodeName }
         );
+    }
 
-        // Add to timeline
-        requisition.addToTimeline(
-          requisition.approvalSteps ? requisition.approvalSteps.length + 1 : 1,
-          "approved",
-          req.user,
-          requisition.currentApprovalStep.nodeId,
-          requisition.currentApprovalStep.nodeName,
-          { comments }
-        );
+    // Add to timeline
+    requisition.addToTimeline(
+        requisition.approvalSteps ? requisition.approvalSteps.length + 1 : 1,
+        "approved",
+        req.user,
+        requisition.currentApprovalStep.nodeId,
+        requisition.currentApprovalStep.nodeName,
+        { 
+            comments, 
+            status: requisition.status,
+            isProcurementApproval: isProcurementOfficer
+        }
+    );
 
-        // Check if step is complete
-        await checkAndProcessStepCompletion(requisition);
-        break;
+    // Check if step is complete
+    await checkAndProcessStepCompletion(requisition);
+    break;
 
       case "reject":
         // Update approver status
@@ -2194,6 +2304,68 @@ exports.approveRequisitionStep = async (req, res) => {
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
+};
+
+
+// Add this function to track procurement-specific approvals
+exports.getProcurementApprovedRequisitions = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found"
+            });
+        }
+
+        // Get requisitions that have been approved by procurement officers but are not final
+        const query = {
+            company: user.company,
+            status: "approved-rfq",
+            "currentApprovalStep": { $ne: null } // Still has pending steps
+        };
+
+        const requisitions = await Requisition.find(query)
+            .populate([
+                {
+                    path: 'employee',
+                    select: 'firstName lastName email position department',
+                    populate: {
+                        path: 'department',
+                        select: 'name departmentCode'
+                    }
+                },
+                {
+                    path: 'department',
+                    select: 'name departmentCode'
+                },
+                {
+                    path: 'workflow',
+                    select: 'name code'
+                },
+                {
+                    path: 'currentApprovalStep.approvers.userId',
+                    select: 'firstName lastName email role department',
+                    model: 'User'
+                }
+            ])
+            .sort({ updatedAt: -1 })
+            .lean();
+
+        res.status(200).json({
+            success: true,
+            data: requisitions,
+            count: requisitions.length,
+            message: "Requisitions approved by procurement officers for RFQ processing"
+        });
+
+    } catch (error) {
+        console.error('Error fetching procurement approved requisitions:', error);
+        res.status(500).json({
+            success: false,
+            message: "Server error while fetching procurement approved requisitions"
+        });
+    }
 };
 // New function to reject with workflow
 exports.rejectRequisitionStep = async (req, res) => {

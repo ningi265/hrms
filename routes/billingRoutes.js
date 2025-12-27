@@ -37,7 +37,14 @@ const billingRoles = [
     "Office Manager",
     "Customer Support Representative",
     "Customer Success Manager",
-    "Vendor"
+    "Vendor",
+     "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ];
 
 // Public webhook endpoint (must be before other routes and without auth)

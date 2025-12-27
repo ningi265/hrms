@@ -22,7 +22,10 @@ const ALLOWED_ROLES = [
   "Management",
   "Human Resources",
   "Accounting/Finance",
-  "Enterprise(CEO, CFO, etc.)"
+  "Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ];
 
 // Process AI chat message

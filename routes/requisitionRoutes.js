@@ -55,7 +55,10 @@ const billingRoles = [
   "Administrative Assistant",
   "Office Manager",
   "Customer Support Representative",
-  "Customer Success Manager"
+  "Customer Success Manager", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ];
 
 // ======================

@@ -25,7 +25,10 @@ router.post("/",
     "Management",
     "Human Resources",
     "Accounting/Finance",
-    "Enterprise(CEO, CFO, etc.)"
+    "Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
   ]), 
    trackApiUsage,
   createPO
@@ -42,7 +45,10 @@ router.get("/",
     "Management",
     "Human Resources",
     "Accounting/Finance",
-    "Enterprise(CEO, CFO, etc.)"
+    "Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
   ]), 
   getAllPOs
 );
@@ -57,7 +63,10 @@ router.get("/vendor",
     "Management",
     "Human Resources",
     "Accounting/Finance",
-    "Enterprise(CEO, CFO, etc.)"
+    "Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
   ]), 
   getVendorPOs
 );

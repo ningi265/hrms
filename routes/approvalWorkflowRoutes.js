@@ -9,7 +9,10 @@ const workflowAdminRoles = [
         "Executive (CEO, CFO, etc.)",
         "Management",
         "Human Resources",
-        "Accounting/Finance","Enterprise(CEO, CFO, etc.)"
+        "Accounting/Finance","Enterprise(CEO, CFO, etc.)", "Procurement Officer",
+    "Senior Procurement Officer",
+     "Procurement Manager",
+     "Supply Chain Officer"
 ];
 
 
