@@ -888,17 +888,22 @@ exports.getPendingApprovalsByUser = async (req, res) => {
     const skip = (page - 1) * limit;
 
     // Build query to find requisitions where user is a pending approver in current step
+    // UPDATED: Better user matching logic
     const baseQuery = {
       company: user.company,
       status: "in-review",
       "currentApprovalStep.approvers": {
         $elemMatch: {
           $or: [
+            // Match by user ID (direct)
             { userId: user._id },
+            // Match by email
             { email: user.email },
-            // For department heads, include department-based approvals
+            // Match by user role if approver role matches user role
+            { role: user.role },
+            // For department heads
             ...(user.role === 'Department Head' && user.department ? 
-              [{ departmentId: user.department.toString() }] : [])
+              [{ department: user.department.toString() }] : [])
           ],
           status: "pending"
         }
@@ -979,20 +984,51 @@ exports.getPendingApprovalsByUser = async (req, res) => {
       .limit(limit)
       .lean();
 
+    // NEW: Debug logging to see what's being fetched
+    console.log(`Found ${requisitions.length} requisitions in query`);
+    
     // Enrich the response with additional information
     const enrichedApprovals = requisitions.map(requisition => {
       const currentStep = requisition.currentApprovalStep;
       
-      // Find user's specific approver info
-      const userApprover = currentStep.approvers.find(approver => 
-        (approver.userId && approver.userId._id && approver.userId._id.toString() === user._id.toString()) ||
-        approver.email === user.email ||
-        (user.role === 'Department Head' && 
-         user.department && 
-         requisition.department && 
-         requisition.department._id.toString() === user.department.toString())
-      );
-
+      // NEW: Better approver matching logic
+      let userApprover = null;
+      
+      // Try multiple ways to find the approver
+      if (currentStep && currentStep.approvers) {
+        userApprover = currentStep.approvers.find(approver => {
+          // Case 1: Direct user ID match (userId field populated)
+          if (approver.userId && approver.userId._id) {
+            return approver.userId._id.toString() === user._id.toString();
+          }
+          
+          // Case 2: Email match
+          if (approver.email && approver.email === user.email) {
+            return true;
+          }
+          
+          // Case 3: Role match
+          if (approver.role && approver.role === user.role) {
+            return true;
+          }
+          
+          // Case 4: User ID string match (not populated)
+          if (approver.userId && approver.userId.toString() === user._id.toString()) {
+            return true;
+          }
+          
+          // Case 5: Department head match
+          if (user.role === 'Department Head' && 
+              user.department && 
+              requisition.department && 
+              requisition.department._id.toString() === user.department.toString()) {
+            return true;
+          }
+          
+          return false;
+        });
+      }
+      
       // Calculate days pending
       const created = new Date(requisition.createdAt);
       const now = new Date();
@@ -1004,6 +1040,11 @@ exports.getPendingApprovalsByUser = async (req, res) => {
         const slaDate = new Date(requisition.slaDueDate);
         isSlaBreached = slaDate < now;
       }
+
+      // NEW: Add debug info
+      console.log(`Requisition ${requisition._id}: Current step: ${currentStep?.nodeName}`);
+      console.log(`  Approvers in current step: ${currentStep?.approvers?.length || 0}`);
+      console.log(`  User approver found: ${!!userApprover}`);
 
       return {
         _id: requisition._id,
@@ -1018,9 +1059,9 @@ exports.getPendingApprovalsByUser = async (req, res) => {
           email: requisition.employee?.email,
           position: requisition.employee?.position
         },
-        currentStage: currentStep.nodeName,
-        currentStageId: currentStep.nodeId,
-        currentStageType: currentStep.nodeType,
+        currentStage: currentStep?.nodeName || 'Unknown',
+        currentStageId: currentStep?.nodeId,
+        currentStageType: currentStep?.nodeType,
         daysPending,
         slaDeadline: requisition.slaDueDate,
         isSlaBreached,
@@ -1037,11 +1078,11 @@ exports.getPendingApprovalsByUser = async (req, res) => {
           canDelegate: currentStep.canDelegate !== false
         } : null,
         stepDetails: {
-          minApprovalsRequired: currentStep.minApprovalsRequired,
-          approvalsReceived: currentStep.approvalsReceived,
-          rejectionsReceived: currentStep.rejectionsReceived,
-          totalApprovers: currentStep.approvers.length,
-          timeoutAt: currentStep.timeoutAt
+          minApprovalsRequired: currentStep?.minApprovalsRequired || 1,
+          approvalsReceived: currentStep?.approvalsReceived || 0,
+          rejectionsReceived: currentStep?.rejectionsReceived || 0,
+          totalApprovers: currentStep?.approvers?.length || 0,
+          timeoutAt: currentStep?.timeoutAt
         },
         previousApprovals: requisition.approvalSteps?.map(step => ({
           stepName: step.nodeName,
@@ -1054,34 +1095,39 @@ exports.getPendingApprovalsByUser = async (req, res) => {
       };
     });
 
+    // Filter out approvals where user is not actually an approver
+    const filteredApprovals = enrichedApprovals.filter(approval => approval.userApprovalInfo !== null);
+    
+    console.log(`After filtering, ${filteredApprovals.length} approvals require user action`);
+
     // Calculate statistics
     const stats = {
-      totalPending: total,
-      highPriority: enrichedApprovals.filter(a => a.urgency === 'high').length,
-      overdue: enrichedApprovals.filter(a => a.isSlaBreached).length,
-      avgResponseTime: 0 // Would need historical data to calculate
+      totalPending: filteredApprovals.length,
+      highPriority: filteredApprovals.filter(a => a.urgency === 'high').length,
+      overdue: filteredApprovals.filter(a => a.isSlaBreached).length,
+      avgResponseTime: 0
     };
 
     // Group by stage for filtering
-    const stages = [...new Set(enrichedApprovals.map(a => a.currentStageType))];
+    const stages = [...new Set(filteredApprovals.map(a => a.currentStageType))];
 
     res.status(200).json({
       success: true,
-      data: enrichedApprovals,
+      data: filteredApprovals,
       stats,
       filters: {
         availableStages: stages.map(stage => ({
           value: stage,
           label: stage.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())
         })),
-        departments: [...new Set(enrichedApprovals.map(a => a.department).filter(Boolean))],
-        categories: [...new Set(enrichedApprovals.map(a => a.category).filter(Boolean))]
+        departments: [...new Set(filteredApprovals.map(a => a.department).filter(Boolean))],
+        categories: [...new Set(filteredApprovals.map(a => a.category).filter(Boolean))]
       },
       pagination: {
         page,
         limit,
-        total,
-        pages: Math.ceil(total / limit)
+        total: filteredApprovals.length,
+        pages: Math.ceil(filteredApprovals.length / limit)
       },
       user: {
         id: user._id,
