@@ -1,6 +1,7 @@
 const Tenders = require("../../models/tenders");
 const Requisition = require("../../models/requisition");
 const User = require("../../models/user");
+const Vendor = require("../../models/vendor");
 const { notifyVendorsAboutRFQ, notifySelectedVendor } = require("../services/notificationService");
 const {sendNotifications} = require("../services/notificationService");
 const Department = require("../../models/departments");
@@ -42,7 +43,9 @@ exports.createTender = async (req, res) => {
             title, 
             category, 
             deadline,
+            deadlineTime,
             description,
+            scopeOfWork,
             budget,
             urgency,
             location,
@@ -50,19 +53,47 @@ exports.createTender = async (req, res) => {
             requirements,
             technicalSpecs,
             paymentTerms,
-            evaluationCriteria
+            evaluationCriteria,
+            techScoreWeight,
+            financialScoreWeight,
+            evaluationDetails,
+            projectStartDate,
+            projectEndDate,
+            contractDuration,
+            warrantyPeriod,
+            additionalTerms,
+            preBidMeetingDate,
+            preBidMeetingTime,
+            preBidMeetingVenue,
+            requireTechnicalProposal,
+            requireFinancialProposal,
+            requireCompanyProfile,
+            requireCertificates,
+            submissionInstructions,
+            bidSecurityRequired,
+            bidSecurityAmount,
+            customPaymentTerms
         } = req.body;
 
         // Validate required fields
-        if (!title || !budget || !category || !location) {
+        if (!title || !budget || !category || !location || !scopeOfWork) {
             return res.status(400).json({ 
-                message: "title, budget, category, and location are required" 
+                message: "title, budget, category, location, and scopeOfWork are required" 
             });
         }
 
         // Validate deadline
-        if (deadline && new Date(deadline) <= new Date()) {
-            return res.status(400).json({ message: "Deadline must be in the future" });
+        let finalDeadline = null;
+        if (deadline) {
+            finalDeadline = new Date(deadline);
+            if (deadlineTime) {
+                const [hours, minutes] = deadlineTime.split(":");
+                finalDeadline.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+            }
+            
+            if (finalDeadline <= new Date()) {
+                return res.status(400).json({ message: "Deadline must be in the future" });
+            }
         }
 
         // Validate requisition if provided
@@ -77,61 +108,168 @@ exports.createTender = async (req, res) => {
             }
         }
 
+        // Parse requirements
         const parsedRequirements = Array.isArray(requirements) 
             ? requirements 
-            : requirements?.split(",").map(r => r.trim()) || [];
+            : (requirements?.split("\n")?.map(r => r.trim())?.filter(r => r.length > 0) || []);
+
+        // Prepare evaluation criteria object
+        const evaluationCriteriaObj = {
+            techScoreWeight: techScoreWeight || 70,
+            financialScoreWeight: financialScoreWeight || 30,
+            evaluationDetails: evaluationDetails || "",
+            criteria: evaluationCriteria || ""
+        };
+
+        // Prepare submission requirements object
+        const submissionRequirements = {
+            requireTechnicalProposal: requireTechnicalProposal !== false,
+            requireFinancialProposal: requireFinancialProposal !== false,
+            requireCompanyProfile: requireCompanyProfile !== false,
+            requireCertificates: requireCertificates !== false,
+            instructions: submissionInstructions || "",
+            documents: []
+        };
+
+        // Prepare contract terms object
+        const contractTerms = {
+            duration: contractDuration ? parseInt(contractDuration) : null,
+            warrantyPeriod: warrantyPeriod ? parseInt(warrantyPeriod) : null,
+            additionalTerms: additionalTerms || "",
+            paymentTerms: paymentTerms || "30 days after invoice"
+        };
+
+        // Prepare pre-bid meeting object
+        const preBidMeeting = (preBidMeetingDate || preBidMeetingTime || preBidMeetingVenue) ? {
+            date: preBidMeetingDate ? new Date(preBidMeetingDate) : null,
+            time: preBidMeetingTime || null,
+            venue: preBidMeetingVenue || ""
+        } : null;
+
+        // Prepare bid security object
+        const bidSecurity = {
+            required: bidSecurityRequired === "yes",
+            amount: bidSecurityAmount ? parseFloat(bidSecurityAmount) : 0,
+            currency: "MWK"
+        };
+
+        // Get company contact info
+        const company = await User.findById(requestingUser.company).select("email phone");
+        const companyEmail = company?.email || requestingUser.email;
+        const companyPhone = company?.phone || "";
 
         // Create tender
-        let tender = await Tenders.create({
+        const tender = await Tenders.create({
             procurementOfficer: req.user._id,
             company: requestingUser.company,
-            department: requestingUser.department,
+            department: requestingUser.department || "",
+            
+            // Basic Information
             title,
+            category,
             status: "open",
-            deadline: deadline ? new Date(deadline) : null,
-            description: description || "",
-            budget: budget ? parseFloat(budget) : null,
+            
+            // Timeline
+            deadline: finalDeadline,
+            deadlineTime: deadlineTime || "17:00",
             urgency: urgency || "medium",
-            location: location || "",
-            requisitionId: requisitionId || null,
-            requirements: parsedRequirements,
+            projectStartDate: projectStartDate ? new Date(projectStartDate) : null,
+            projectEndDate: projectEndDate ? new Date(projectEndDate) : null,
+            
+            // Tender Details
+            description: description || "",
+            scopeOfWork: scopeOfWork || "",
             technicalSpecs: technicalSpecs || "",
-            paymentTerms: paymentTerms || "",
-            evaluationCriteria: evaluationCriteria || ""
+            requirements: parsedRequirements,
+            
+            // Financial Information
+            budget: parseFloat(budget),
+            paymentTerms: paymentTerms || "30 days after invoice",
+            customPaymentTerms: customPaymentTerms || "",
+            bidSecurity: bidSecurity,
+            
+            // Location & Contact
+            location: location || "",
+            contactEmail: companyEmail,
+            contactPhone: companyPhone,
+            
+            // Requisition Link
+            requisitionId: requisitionId || null,
+            
+            // Submission & Evaluation
+            evaluationCriteria: evaluationCriteriaObj,
+            submissionRequirements: submissionRequirements,
+            
+            // Contract Terms
+            contractTerms: contractTerms,
+            
+            // Pre-bid Meeting
+            preBidMeeting: preBidMeeting,
+            
+            // Initialize empty bids array
+            bids: []
         });
 
-        // 🔥 Populate the company so we can return its name
-        tender = await tender.populate("company", "name");
+        // Populate the tender for response
+        const populatedTender = await Tenders.findById(tender._id)
+            .populate("company", "name")
+            .populate("procurementOfficer", "firstName lastName");
+
+        // Calculate statistics for response
+        const vendorCount = await Vendor.countDocuments({ 
+            status: "active", 
+            company: requestingUser.company 
+        });
+
+        // Prepare response object
+        const responseTender = {
+            _id: populatedTender._id,
+            title: populatedTender.title,
+            category: populatedTender.category,
+            status: populatedTender.status,
+            deadline: populatedTender.deadline,
+            deadlineTime: populatedTender.deadlineTime,
+            urgency: populatedTender.urgency,
+            projectStartDate: populatedTender.projectStartDate,
+            projectEndDate: populatedTender.projectEndDate,
+            description: populatedTender.description,
+            scopeOfWork: populatedTender.scopeOfWork,
+            technicalSpecs: populatedTender.technicalSpecs,
+            requirements: populatedTender.requirements,
+            budget: populatedTender.budget,
+            paymentTerms: populatedTender.paymentTerms,
+            customPaymentTerms: populatedTender.customPaymentTerms,
+            bidSecurity: populatedTender.bidSecurity,
+            location: populatedTender.location,
+            contactEmail: populatedTender.contactEmail,
+            contactPhone: populatedTender.contactPhone,
+            requisitionId: populatedTender.requisitionId,
+            evaluationCriteria: populatedTender.evaluationCriteria,
+            submissionRequirements: populatedTender.submissionRequirements,
+            contractTerms: populatedTender.contractTerms,
+            preBidMeeting: populatedTender.preBidMeeting,
+            company: {
+                _id: populatedTender.company._id,
+                name: populatedTender.company.name
+            },
+            procurementOfficer: {
+                _id: populatedTender.procurementOfficer._id,
+                name: `${populatedTender.procurementOfficer.firstName} ${populatedTender.procurementOfficer.lastName}`
+            },
+            createdAt: populatedTender.createdAt,
+            
+            // Virtual fields for frontend
+            bidCount: 0,
+            vendorCount: vendorCount,
+            daysUntilDeadline: populatedTender.daysUntilDeadline,
+            statusColor: populatedTender.statusColor,
+            urgencyColor: populatedTender.urgencyColor
+        };
 
         res.status(201).json({ 
             success: true,
             message: "Tender created successfully", 
-            tender: {
-                id: tender._id,
-                title: tender.title,
-                deadline: tender.deadline,
-                urgency: tender.urgency,
-                requirements: tender.requirements,
-                description: tender.description,
-                status: tender.status,
-                createdAt: tender.createdAt,
-                company: { 
-                    _id: tender.company._id, 
-                    name: tender.company.name 
-                },
-                procurementOfficer: tender.procurementOfficer,
-                requisitionId: tender.requisitionId || null,
-                budget: tender.budget,
-                location: tender.location,
-                bidCount: 0,
-                vendorCount: 0,
-                daysUntilDeadline: tender.deadline
-                    ? Math.ceil((new Date(tender.deadline).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
-                    : null,
-                completionPercentage: 0,
-                statusColor: "green",
-                priorityColor: tender.urgency === "high" ? "red" : (tender.urgency === "medium" ? "yellow" : "green")
-            }
+            tender: responseTender
         });
 
     } catch (err) {
@@ -144,7 +282,6 @@ exports.createTender = async (req, res) => {
         });
     }
 };
-
 
 
 // Get all Tenders (Procurement Officers & Admins)
@@ -164,62 +301,59 @@ exports.getAllTenders = async (req, res) => {
 
 exports.getCompanyTenders = async (req, res) => {
   try {
-    // Get the requesting user's company and permissions
     console.log("Requesting user ID:", req.user._id);
     const requestingUser = await User.findById(req.user._id).select('company isEnterpriseAdmin');
     if (!requestingUser) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Base query - filter by company unless user is enterprise admin with special privileges
     const companyQuery = requestingUser.isEnterpriseAdmin && req.query.allCompanies ? {} : { company: requestingUser.company };
     const baseQuery = { ...companyQuery };
 
-    // Optional status filter
     if (req.query.status) {
       baseQuery.status = req.query.status;
     }
 
-    // Get pagination parameters
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    // Get sorting parameters
     const sortField = req.query.sortBy || 'createdAt';
     const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
     const sort = { [sortField]: sortOrder };
 
-    // Get RFQs with populated vendor and procurement officer info
+    // Update population to include all fields
     const tenders = await Tenders.find(baseQuery)
-      .populate("procurementOfficer", "firstName lastName email")
-        .populate("company", "name")
-        .populate("requisitionId", "itemName status")
-        .populate("bids.vendor", "name contactEmail")
+      .populate("procurementOfficer", "firstName lastName email phone")
+      .populate("company", "name email phone")
+      .populate("requisitionId", "itemName status estimatedCost category location")
+      .populate("bids.vendor", "businessName email contactPerson phone status")
+      .populate("awardedTo", "businessName email")
       .sort(sort)
       .skip(skip)
       .limit(limit)
       .lean();
 
-    // Get total count for pagination
     const totalCount = await Tenders.countDocuments(baseQuery);
 
-    console.log(`Fetched ${tenders.length} Tenders for company ${requestingUser.company}`);
-
-    // Add virtuals to the response since lean() doesn't include them
-    const enhancedTenders = tenders.map(tender => ({
-  ...tender,
-  bidCount: tender.bids?.length || 0,
-  vendorCount: tender.vendors?.length || 0,
-  daysUntilDeadline: tender.deadline 
-    ? Math.ceil((new Date(tender.deadline).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
-    : null,
-  completionPercentage: tender.vendors?.length 
-    ? Math.round(((tender.bids?.length || 0) / tender.vendors.length) * 100)
-    : 0,
-  statusColor: getStatusColor(tender.status),
-  priorityColor: getPriorityColor(tender.priority)
-}));
+    // Enhance tenders with virtual fields
+    const enhancedTenders = await Promise.all(tenders.map(async (tender) => {
+        const vendorCount = await getVendorCount(requestingUser.company);
+        
+        return {
+            ...tender,
+            bidCount: tender.bids?.length || 0,
+            vendorCount: vendorCount,
+            daysUntilDeadline: tender.deadline 
+                ? Math.ceil((new Date(tender.deadline).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
+                : null,
+            completionPercentage: tender.vendors?.length 
+                ? Math.round(((tender.bids?.length || 0) / tender.vendors.length) * 100)
+                : 0,
+            statusColor: getStatusColor(tender.status),
+            priorityColor: getPriorityColor(tender.urgency || 'medium')
+        };
+    }));
 
     res.status(200).json({
       success: true,
@@ -249,6 +383,8 @@ exports.getCompanyTenders = async (req, res) => {
 };
 
 
+
+
 // Helper functions for virtuals
 function getStatusColor(status) {
   switch (status) {
@@ -274,16 +410,47 @@ function getPriorityColor(priority) {
 exports.getTenderById = async (req, res) => {
     try {
         const tender = await Tenders.findById(req.params.id)
-            .populate("procurementOfficer", "firstName lastName email")
-            .populate("company", "name")
-            .populate("requisitionId", "itemName status")
-            .populate("bids.vendor", "name contactEmail");
+            .populate("procurementOfficer", "firstName lastName email phone")
+            .populate("company", "name email phone")
+            .populate("requisitionId", "itemName status estimatedCost category location")
+            .populate("bids.vendor", "businessName email contactPerson phone status")
+            .populate("awardedTo", "businessName email")
+            .lean();
+
         if (!tender) {
-            return res.status(404).json({ message: "Tender not found" });
+            return res.status(404).json({ 
+                success: false,
+                message: "Tender not found" 
+            });
         }
-        res.json(tender);
+
+        // Enhance tender with virtual fields
+        const enhancedTender = {
+            ...tender,
+            bidCount: tender.bids?.length || 0,
+            vendorCount: await Vendor.countDocuments({ 
+                status: "active", 
+                company: tender.company._id 
+            }) || 0,
+            daysUntilDeadline: tender.deadline 
+                ? Math.ceil((new Date(tender.deadline).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
+                : null,
+            statusColor: getStatusColor(tender.status),
+            priorityColor: getPriorityColor(tender.urgency || 'medium')
+        };
+
+        res.status(200).json({
+            success: true,
+            data: enhancedTender
+        });
+
     } catch (err) {
-        res.status(500).json({ message: "Server error", error: err.message });
+        console.error('Error fetching tender by ID:', err);
+        res.status(500).json({ 
+            success: false,
+            message: "Server error while fetching tender",
+            error: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
     }
 };
 

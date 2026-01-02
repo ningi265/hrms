@@ -24,35 +24,34 @@ exports.createRFQ = async (req, res) => {
     }
 
     const allowedRoles = [
-            "employee", "procurement_officer", "IT/Technical",
-            "Executive (CEO, CFO, etc.)", "Management", 
-            "Sales/Marketing", "Enterprise(CEO, CFO, etc.)",
-    "Sales Representative",
-    "Sales Manager",
-    "Marketing Specialist",
-    "Marketing Manager",
-    "HR Specialist",
-    "HR Manager",
-    "Office Manager",
-    "Customer Support Representative",
-    "Customer Success Manager"
-        ];
+        "employee", "procurement_officer", "IT/Technical",
+        "Executive (CEO, CFO, etc.)", "Management", 
+        "Sales/Marketing", "Enterprise(CEO, CFO, etc.)",
+        "Sales Representative",
+        "Sales Manager",
+        "Marketing Specialist",
+        "Marketing Manager",
+        "HR Specialist",
+        "HR Manager",
+        "Office Manager",
+        "Customer Support Representative",
+        "Customer Success Manager"
+    ];
 
-         if (!requestingUser.isEnterpriseAdmin && 
-            !allowedRoles.includes(requestingUser.role)) {
-            return res.status(403).json({ 
-                success: false,
-                message: "Unauthorized to create requisitions",
-                requiredRole: "One of: " + allowedRoles.join(", ")
-            });
-        }
+    if (!requestingUser.isEnterpriseAdmin && 
+        !allowedRoles.includes(requestingUser.role)) {
+        return res.status(403).json({ 
+            success: false,
+            message: "Unauthorized to create requisitions",
+            requiredRole: "One of: " + allowedRoles.join(", ")
+        });
+    }
     
     console.log('Received data:', req.body);
     console.log('User from JWT:', req.user);
     
     try {
         const { 
-            
             itemName, 
             quantity, 
             deadline,
@@ -82,19 +81,108 @@ exports.createRFQ = async (req, res) => {
         const procurementOfficer = await User.findById(req.user._id)
             .select('firstName lastName email companyName');
 
+        // Helper function to check if procurement has approved
+        const hasProcurementApproved = (requisition) => {
+            // Check 1: Status is "approved-rfq"
+            if (requisition.status === "approved-rfq") {
+                return true;
+            }
+            
+            // Check 2: Look for procurement approval in workflow timeline
+            if (requisition.workflowTimeline && Array.isArray(requisition.workflowTimeline)) {
+                const procurementApproval = requisition.workflowTimeline.find(item => 
+                    item.action === "approved_rfq_intermediate" || 
+                    item.action === "procurement_approved" ||
+                    (item.details && item.details.isProcurementApproval === true)
+                );
+                
+                if (procurementApproval) {
+                    return true;
+                }
+            }
+            
+            // Check 3: Look in history
+            if (requisition.history && Array.isArray(requisition.history)) {
+                const procurementHistory = requisition.history.find(item => 
+                    item.action === "approved_rfq_intermediate" || 
+                    item.action === "procurement_approved" ||
+                    (item.details && item.details.isProcurementApproval === true)
+                );
+                
+                if (procurementHistory) {
+                    return true;
+                }
+            }
+            
+            // Check 4: Look in approval steps for procurement approvers
+            if (requisition.approvalSteps && Array.isArray(requisition.approvalSteps)) {
+                for (const step of requisition.approvalSteps) {
+                    if (step.approvers && Array.isArray(step.approvers)) {
+                        const procurementApprover = step.approvers.find(approver => {
+                            // Check if approver is a procurement role
+                            const procurementRoles = [
+                                "Procurement Officer",
+                                "Senior Procurement Officer", 
+                                "Procurement Manager",
+                                "Supply Chain Officer"
+                            ];
+                            
+                            // Check approver role directly or in userId if populated
+                            const approverRole = approver.role || 
+                                (approver.userId && approver.userId.role ? approver.userId.role : null);
+                            
+                            return procurementRoles.includes(approverRole) && 
+                                   approver.status === "approved";
+                        });
+                        
+                        if (procurementApprover) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            
+            return false;
+        };
 
         // Validate requisition if provided
         let requisition = null;
         if (requisitionId) {
-            requisition = await Requisition.findById(requisitionId);
+            requisition = await Requisition.findById(requisitionId)
+                .populate('approvalSteps.approvers.userId', 'role');
+            
             if (!requisition) {
                 return res.status(400).json({ message: "Invalid requisition ID provided" });
             }
             
-            // Check if requisition is approved
-            if (requisition.status !== 'approved') {
+            // Check if requisition is approved by procurement (not just fully approved)
+            const isProcurementApproved = hasProcurementApproved(requisition);
+            const isFullyApproved = requisition.status === 'approved';
+            const isApprovedRfq = requisition.status === 'approved-rfq';
+            const isInReview = requisition.status === 'in-review';
+            
+            console.log(`Requisition validation:`, {
+                requisitionId: requisition._id,
+                status: requisition.status,
+                isProcurementApproved,
+                isFullyApproved,
+                isApprovedRfq,
+                isInReview
+            });
+            
+            // Allow RFQ creation if:
+            // 1. Requisition is fully approved (status: 'approved')
+            // 2. Requisition has RFQ approval (status: 'approved-rfq')
+            // 3. Requisition is in-review but procurement has approved
+            if (!isFullyApproved && !isApprovedRfq && !isProcurementApproved) {
                 return res.status(400).json({ 
-                    message: "Only approved requisitions can be used to create RFQs" 
+                    success: false,
+                    message: "Requisition must be approved by procurement before creating RFQ",
+                    details: {
+                        currentStatus: requisition.status,
+                        hasProcurementApproval: isProcurementApproved,
+                        allowedStatuses: ["approved", "approved-rfq", "in-review (with procurement approval)"]
+                    }
                 });
             }
         }
@@ -122,34 +210,46 @@ exports.createRFQ = async (req, res) => {
             requisition.rfqCreated = true;
             requisition.rfqId = rfq._id;
             requisition.updatedAt = new Date();
+            
+            // Add to requisition history
+            requisition.addHistory(
+                "rfq_created",
+                req.user,
+                `RFQ created: ${rfq._id}`,
+                { rfqId: rfq._id, rfqNumber: rfq.rfqNumber }
+            );
+            
             await requisition.save();
+            
+            console.log(`Requisition ${requisition._id} linked to RFQ ${rfq._id}`);
         }
-
-        // Prepare email notification details
-        const formattedDeadline = deadline 
-            ? new Date(deadline).toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            })
-            : 'Not specified';
 
         // Log the RFQ creation activity
         console.log(`RFQ created: ${rfq._id} by ${req.user.firstName || req.user._id} for ${itemName}`);
-        //console.log(`Notifications: ${notificationResults.successful} sent, ${notificationResults.failed} failed`);
+        
+        // Generate RFQ number after saving (if you have a virtual or method for this)
+        const populatedRFQ = await RFQ.findById(rfq._id)
+            .populate('procurementOfficer', 'firstName lastName email')
+            .populate('requisitionId', 'itemName quantity estimatedCost');
 
         res.status(201).json({ 
             success: true,
             message: "RFQ created successfully", 
             rfq: {
                 id: rfq._id,
+                rfqNumber: populatedRFQ.rfqNumber || `RFQ-${rfq._id.toString().slice(-8).toUpperCase()}`,
                 itemName: rfq.itemName,
                 quantity: rfq.quantity,
                 deadline: rfq.deadline,
                 priority: rfq.priority,
                 status: rfq.status,
-                createdAt: rfq.createdAt
-            },
+                createdAt: rfq.createdAt,
+                requisitionLinked: !!requisitionId,
+                procurementOfficer: {
+                    id: req.user._id,
+                    name: `${procurementOfficer.firstName} ${procurementOfficer.lastName}`
+                }
+            }
         });
 
     } catch (err) {
